@@ -10,15 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: 📂 Sync files to cPanel via FTP
-        uses: SamKirkland/FTP-Deploy-Action@4.3.4
-             with:
-        server: ${{ secrets.FTP_HOST }}
-        username: ${{ secrets.FTP_USER }}
-        password: ${{ secrets.FTP_PASSWORD }}
-        port: 21
-        protocol: ftp
-        local-dir: ./
-        server-dir: /public_html/patientapp_backend/
+      - name: Upload files to cPanel via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          # 👇 IMPORTANT — must end with a slash!
+          local-dir: ./ 
+          server-dir: /public_html/patientapp_backend/
