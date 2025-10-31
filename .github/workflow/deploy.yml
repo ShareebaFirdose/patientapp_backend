@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Upload files to cPanel via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.4
@@ -19,11 +19,5 @@ jobs:
           server: ${{ secrets.FTP_HOST }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps
-          port: 21
-
-          # 👇 This must end with a slash (/) and point to your backend folder
+          server-dir: /home/predsolu/patientapp_backend/
           local-dir: predcare-backend/
-
-          # 👇 Replace this path with your cPanel FTP target directory
-          server-dir: /public_html/patientapp_backend/
