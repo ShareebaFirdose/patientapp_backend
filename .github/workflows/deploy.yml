@@ -1,0 +1,27 @@
+name: 🚀 Deploy Backend to cPanel via FTP
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: 📂 Sync files to cPanel via FTP
+        uses: SamKirkland/FTP-Deploy-Action@4.3.4
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          # ✅ This must end with a slash!
+          local-dir: ./ 
+          # or if your backend code is in a subfolder, like this:
+          # local-dir: ./predcare-backend/
+          server-dir: /public_html/patientapp_backend/
