@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,8 +22,8 @@ jobs:
           protocol: ftps
           port: 21
 
-          # 👇 Correct folder path — since all files are in root
-          local-dir: ./
+          # 👇 This must end with a slash (/) and point to your backend folder
+          local-dir: predcare-backend/
 
-          # 👇 Change this to your cPanel target path
+          # 👇 Replace this path with your cPanel FTP target directory
           server-dir: /public_html/patientapp_backend/
