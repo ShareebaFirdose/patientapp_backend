@@ -16,13 +16,13 @@ jobs:
       - name: Upload files to cPanel via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
-          server: ${{ secrets.FTP_HOST }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          port: ${{ secrets.FTP_PORT }}
-          local-dir: .
-          server-dir: ${{ secrets.FTP_DIR }}
-          exclude: |
+  server: ${{ secrets.FTP_HOST }}
+  username: ${{ secrets.FTP_USERNAME }}
+  password: ${{ secrets.FTP_PASSWORD }}
+  port: 21
+  local-dir: ./
+  server-dir: /home/predsolu/patientapp_backend/
+
             **/node_modules/**
             **/.git/**
             **/.github/**
