@@ -1,11 +1,11 @@
-import db from '../config/db.js';
-
-export const registerUser = (req, res) => {
-  const { name, email, password } = req.body;
-
-  const sql = 'INSERT INTO users (name, email, password) VALUES (?, ?, ?)';
-  db.query(sql, [name, email, password], (err, result) => {
-    if (err) return res.status(500).json({ message: 'DB Error', err });
-    res.json({ message: 'User Registered Successfully' });
-  });
+export const getUserProfile = async (req, res) => {
+  try {
+    res.status(200).json({
+      message: "Welcome to your profile!",
+      user: req.user, // comes from the JWT token payload
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
 };

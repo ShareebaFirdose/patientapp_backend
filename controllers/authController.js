@@ -1,77 +1,114 @@
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import db from "../config/db.js";
-import { sendOTPEmail } from "../utils/emailService.js"; // optional, if using nodemailer
+import { generateOtp } from "../utils/otpGenerator.js";
+import { sendOTPEmail } from "../utils/emailService.js"; // ✅ corrected import
 
-// Generate a random 6-digit OTP
-const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
+export const signup = async (req, res) => {
+  try {
+    const { name, email, phone_number, password } = req.body;
 
-// Signup controller
-export const signup = (req, res) => {
-  const { name, email, mobile, password } = req.body;
+    const [existingUser] = await db.query(
+      "SELECT * FROM users WHERE email = ? OR phone_number = ?",
+      [email, phone_number]
+    );
+    if (existingUser.length > 0)
+      return res.status(400).json({ message: "User already exists" });
 
-  if (!name || !email || !mobile || !password) {
-    return res.status(400).json({ message: "All fields are required" });
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const otp = generateOtp();
+    const otpExpiry = new Date(Date.now() + 5 * 60 * 1000); // valid for 5 mins
+
+    await db.query(
+      "INSERT INTO users (name, email, phone_number, password, otp, otp_expiry) VALUES (?, ?, ?, ?, ?, ?)",
+      [name, email, phone_number, hashedPassword, otp, otpExpiry]
+    );
+
+    // ✅ send OTP via email
+    await sendOTPEmail(email, otp);
+
+    res.status(201).json({ message: "User registered successfully, OTP sent" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
   }
-
-  const otp = generateOTP();
-  const otpExpiry = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes expiry
-
-  db.query(
-    "INSERT INTO users (name, email, mobile, password, otp, otp_expiry) VALUES (?, ?, ?, ?, ?, ?)",
-    [name, email, mobile, password, otp, otpExpiry],
-    (err) => {
-      if (err) {
-        console.error("Signup error:", err);
-        return res.status(500).json({ message: "Signup failed", error: err.message });
-      }
-
-      console.log(`User registered: ${email}, OTP: ${otp}`);
-      res.json({ message: "Signup successful, OTP sent to email", otp });
-    }
-  );
 };
 
-// Login controller
-export const login = (req, res) => {
-  const { emailOrMobile } = req.body;
-  if (!emailOrMobile)
-    return res.status(400).json({ message: "Email or Mobile required" });
+export const login = async (req, res) => {
+  try {
+    const { emailOrPhone } = req.body;
+    const [user] = await db.query(
+      "SELECT * FROM users WHERE email = ? OR phone_number = ?",
+      [emailOrPhone, emailOrPhone]
+    );
 
-  db.query(
-    "SELECT * FROM users WHERE email = ? OR mobile = ?",
-    [emailOrMobile, emailOrMobile],
-    (err, result) => {
-      if (err) return res.status(500).json({ message: "Database error" });
-      if (!result.length)
-        return res.status(404).json({ message: "User not found" });
+    if (user.length === 0)
+      return res.status(400).json({ message: "User not found" });
 
-      const otp = generateOTP();
-      const expiry = new Date(Date.now() + 5 * 60 * 1000);
+    const otp = generateOtp();
+    const otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
 
-      db.query(
-        "UPDATE users SET otp = ?, otp_expiry = ? WHERE id = ?",
-        [otp, expiry, result[0].id],
-        (err) => {
-          if (err) return res.status(500).json({ message: "OTP update failed" });
-          console.log(`OTP sent: ${otp} for ${emailOrMobile}`);
-          res.json({ message: "OTP sent successfully", otp });
-        }
-      );
-    }
-  );
+    await db.query("UPDATE users SET otp = ?, otp_expiry = ? WHERE id = ?", [
+      otp,
+      otpExpiry,
+      user[0].id,
+    ]);
+
+    // ✅ send OTP via email
+    await sendOTPEmail(user[0].email, otp);
+
+    res.status(200).json({ message: "OTP sent successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
-// Verify OTP controller
-export const verifyOtp = (req, res) => {
-  const { emailOrMobile, otp } = req.body;
+export const verifyOtp = async (req, res) => {
+  try {
+    const { emailOrPhone, otp } = req.body;
 
-  db.query(
-    "SELECT * FROM users WHERE (email = ? OR mobile = ?) AND otp = ?",
-    [emailOrMobile, emailOrMobile, otp],
-    (err, result) => {
-      if (err) return res.status(500).json({ message: "Database error" });
-      if (!result.length) return res.status(400).json({ message: "Invalid OTP" });
+    const [user] = await db.query(
+      "SELECT * FROM users WHERE (email = ? OR phone_number = ?) AND otp = ?",
+      [emailOrPhone, emailOrPhone, otp]
+    );
 
-      res.json({ message: "OTP verified successfully" });
+    if (user.length === 0)
+      return res.status(400).json({ message: "Invalid OTP or user" });
+
+    const currentTime = new Date();
+    if (new Date(user[0].otp_expiry) < currentTime) {
+      return res.status(400).json({ message: "OTP expired" });
     }
-  );
+
+    // ✅ clear otp after success
+    await db.query("UPDATE users SET otp = NULL, otp_expiry = NULL WHERE id = ?", [
+      user[0].id,
+    ]);
+
+    // ✅ generate jwt
+    const token = jwt.sign(
+      {
+        id: user[0].id,
+        email: user[0].email,
+        phone_number: user[0].phone_number,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    res.status(200).json({
+      message: "OTP verified successfully",
+      token,
+      user: {
+        id: user[0].id,
+        name: user[0].name,
+        email: user[0].email,
+        phone_number: user[0].phone_number,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
 };
