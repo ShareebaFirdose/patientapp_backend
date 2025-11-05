@@ -1,10 +1,11 @@
 import express from "express";
-import { authenticateUser } from "../middleware/auth.js";
-import { getUserProfile } from "../controllers/userController.js";
+import multer from "multer";
+import { createOrUpdateUserProfile } from "../controllers/userController.js";
+import { protect } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
+const upload = multer({ dest: "uploads/" });
 
-// ✅ Protected route
-router.get("/profile", authenticateUser, getUserProfile);
+router.post("/profile", protect, upload.single("profile_picture"), createOrUpdateUserProfile);
 
 export default router;

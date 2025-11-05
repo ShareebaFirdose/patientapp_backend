@@ -1,114 +1,162 @@
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
+// controllers/authController.js
 import db from "../config/db.js";
-import { generateOtp } from "../utils/otpGenerator.js";
-import { sendOTPEmail } from "../utils/emailService.js"; // ✅ corrected import
+import nodemailer from "nodemailer";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 
-export const signup = async (req, res) => {
+// ✅ Signup User
+export const signupUser = async (req, res) => {
+  const { name, email, phone_number, password } = req.body;
+
   try {
-    const { name, email, phone_number, password } = req.body;
-
-    const [existingUser] = await db.query(
-      "SELECT * FROM users WHERE email = ? OR phone_number = ?",
-      [email, phone_number]
-    );
-    if (existingUser.length > 0)
+    const [existing] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
+    if (existing.length > 0)
       return res.status(400).json({ message: "User already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const otp = generateOtp();
-    const otpExpiry = new Date(Date.now() + 5 * 60 * 1000); // valid for 5 mins
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
     await db.query(
-      "INSERT INTO users (name, email, phone_number, password, otp, otp_expiry) VALUES (?, ?, ?, ?, ?, ?)",
-      [name, email, phone_number, hashedPassword, otp, otpExpiry]
+      "INSERT INTO users (name, email, phone_number, password, otp) VALUES (?, ?, ?, ?, ?)",
+      [name, email, phone_number, hashedPassword, otp]
     );
 
-    // ✅ send OTP via email
-    await sendOTPEmail(email, otp);
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
 
-    res.status(201).json({ message: "User registered successfully, OTP sent" });
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "PredCare Registration OTP",
+      text: `Your OTP for registration is: ${otp}`,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(200).json({ message: "OTP sent successfully to email", email });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Server error" });
+    console.error("Signup Error:", error);
+    res.status(500).json({ message: "Signup failed" });
   }
 };
 
-export const login = async (req, res) => {
-  try {
-    const { emailOrPhone } = req.body;
-    const [user] = await db.query(
-      "SELECT * FROM users WHERE email = ? OR phone_number = ?",
-      [emailOrPhone, emailOrPhone]
-    );
+// ✅ Verify Signup OTP
+export const verifyOtp = async (req, res) => {
+  const { email, otp } = req.body;
 
+  try {
+    const [user] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
     if (user.length === 0)
       return res.status(400).json({ message: "User not found" });
 
-    const otp = generateOtp();
-    const otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
+    if (user[0].otp !== otp)
+      return res.status(400).json({ message: "Invalid OTP" });
 
-    await db.query("UPDATE users SET otp = ?, otp_expiry = ? WHERE id = ?", [
-      otp,
-      otpExpiry,
-      user[0].id,
-    ]);
+    await db.query("UPDATE users SET otp = NULL, is_verified = 1 WHERE email = ?", [email]);
 
-    // ✅ send OTP via email
-    await sendOTPEmail(user[0].email, otp);
-
-    res.status(200).json({ message: "OTP sent successfully" });
+    res.status(200).json({ message: "Signup successful!" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Server error" });
+    console.error("OTP Verification Error:", error);
+    res.status(500).json({ message: "OTP verification failed" });
   }
 };
 
-export const verifyOtp = async (req, res) => {
+// ✅ Send OTP for Login
+export const requestLoginOtp = async (req, res) => {
+  const { email } = req.body;
+
   try {
-    const { emailOrPhone, otp } = req.body;
-
-    const [user] = await db.query(
-      "SELECT * FROM users WHERE (email = ? OR phone_number = ?) AND otp = ?",
-      [emailOrPhone, emailOrPhone, otp]
-    );
-
+    const [user] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
     if (user.length === 0)
-      return res.status(400).json({ message: "Invalid OTP or user" });
+      return res.status(400).json({ message: "User not found" });
 
-    const currentTime = new Date();
-    if (new Date(user[0].otp_expiry) < currentTime) {
-      return res.status(400).json({ message: "OTP expired" });
-    }
+    const phoneNumber = user[0].phone_number;
 
-    // ✅ clear otp after success
-    await db.query("UPDATE users SET otp = NULL, otp_expiry = NULL WHERE id = ?", [
-      user[0].id,
-    ]);
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    // ✅ generate jwt
-    const token = jwt.sign(
-      {
-        id: user[0].id,
-        email: user[0].email,
-        phone_number: user[0].phone_number,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
+    await db.query(
+      `INSERT INTO otp_verifications (phone_number, otp_code, purpose, device_id, expires_at, verified, created_at)
+       VALUES (?, ?, 'login', ?, ?, 0, NOW())`,
+      [phoneNumber, otp, user[0].id, expiresAt]
     );
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "PredCare Login OTP",
+      text: `Your login OTP is: ${otp}\n\nIt will expire in 5 minutes.`,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(200).json({ message: "Login OTP sent successfully", email });
+  } catch (error) {
+    console.error("Request Login OTP Error:", error);
+    res.status(500).json({ message: "Failed to send login OTP" });
+  }
+};
+
+// ✅ Verify Login OTP
+export const verifyLoginOtp = async (req, res) => {
+  const { email, otp } = req.body;
+
+  try {
+    const [user] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
+    if (user.length === 0)
+      return res.status(400).json({ message: "User not found" });
+
+    const phoneNumber = user[0].phone_number;
+
+    const [otpRecord] = await db.query(
+      "SELECT * FROM otp_verifications WHERE phone_number = ? AND purpose = 'login' ORDER BY id DESC LIMIT 1",
+      [phoneNumber]
+    );
+
+    if (otpRecord.length === 0)
+      return res.status(400).json({ message: "OTP record not found" });
+
+    if (otpRecord[0].otp_code !== otp)
+      return res.status(400).json({ message: "Invalid OTP" });
+
+    const now = new Date();
+    const expiresAt = new Date(otpRecord[0].expires_at);
+    if (expiresAt < now)
+      return res.status(400).json({ message: "OTP expired" });
+
+    await db.query(
+      "UPDATE otp_verifications SET verified = 1, verified_at = NOW() WHERE id = ?",
+      [otpRecord[0].id]
+    );
+
+    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, {
+      expiresIn: "7d",
+    });
 
     res.status(200).json({
-      message: "OTP verified successfully",
+      message: "Login successful via OTP",
       token,
       user: {
         id: user[0].id,
         name: user[0].name,
         email: user[0].email,
-        phone_number: user[0].phone_number,
       },
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Server error" });
+    console.error("Verify Login OTP Error:", error);
+    res.status(500).json({ message: "OTP verification failed" });
   }
 };
