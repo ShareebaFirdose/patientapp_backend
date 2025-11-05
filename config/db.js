@@ -1,28 +1,36 @@
+// config/db.js
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-let db;
+let pool;
 
-(async () => {
-  try {
-    db = await mysql.createConnection({
-      host: process.env.DB_HOST,
-      user: process.env.DB_USER,
-      password: process.env.DB_PASS,
-      database: process.env.DB_NAME,
-    });
-    console.log("✅ MySQL Connected Successfully!");
-  } catch (error) {
-    console.error("❌ Database connection failed:", error);
-  }
-})();
+try {
+  pool = mysql.createPool({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+  });
 
-export default {
+  console.log("✅ MySQL Connection Pool Initialized Successfully!");
+} catch (error) {
+  console.error("❌ MySQL Connection Pool Failed:", error);
+}
+
+// ✅ Export query & getConnection for compatibility
+const db = {
   query: async (sql, params) => {
-    if (!db) throw new Error("Database not initialized");
-    const [rows] = await db.query(sql, params);
+    const [rows] = await pool.query(sql, params);
     return [rows];
   },
+  getConnection: async () => {
+    return await pool.getConnection();
+  },
 };
+
+export default db;

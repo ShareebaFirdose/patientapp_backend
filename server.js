@@ -14,7 +14,7 @@ import userRoutes from "./routes/userRoutes.js";
 import profileRoutes from "./routes/profileRoutes.js";
 import doctorRoutes from "./routes/doctorRoutes.js";
 import appointmentRoutes from "./routes/appointmentRoutes.js"; // ✅ New Appointment Feature
-
+import patientRoutes from "./routes/patientRoutes.js";
 // ✅ Load environment variables
 dotenv.config();
 
@@ -60,6 +60,7 @@ app.use("/api/user", userRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/doctors", doctorRoutes);
 app.use("/api/appointments", appointmentRoutes);
+app.use("/api/patients", patientRoutes);
 
 // ✅ File upload route
 app.post("/api/upload", upload.single("file"), async (req, res) => {

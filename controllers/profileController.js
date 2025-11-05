@@ -1,125 +1,87 @@
 import db from "../config/db.js";
-import cloudinary from "cloudinary";
-import multer from "multer";
 
-// ✅ Configure Cloudinary
-cloudinary.v2.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-// ✅ Multer memory storage
-const storage = multer.memoryStorage();
-export const upload = multer({ storage });
-
-// ✅ Helper: Upload to Cloudinary using buffer
-const uploadToCloudinary = (fileBuffer) => {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.v2.uploader.upload_stream(
-      { folder: "predcare_profiles" },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve(result);
-      }
+// ✅ Check if profile exists
+export const checkProfile = async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1",
+      [req.user.id]
     );
-    stream.end(fileBuffer);
-  });
+
+    return res.json({
+      success: true,
+      exists: rows.length > 0,
+    });
+  } catch (error) {
+    console.error("Profile check error:", error);
+    return res.status(500).json({ success: false, message: "Error checking profile" });
+  }
 };
 
-export const createOrUpdateProfile = async (req, res) => {
+// ✅ Create or update profile (final version)
+export const createProfile = async (req, res) => {
   try {
-    const userId = req.user?.id;
-    if (!userId)
-      return res.status(401).json({ success: false, message: "Unauthorized user" });
+    const { gender, date_of_birth, alternate_phone } = req.body;
+    const profile_picture = req.body.profile_picture || null;
 
-    const {
-      full_name,
-      first_name,
-      last_name,
-      alternate_phone,
-      gender,
-      date_of_birth,
-      language_preferences,
-      timezone = "Asia/Kolkata",
-    } = req.body;
-
-    if (!full_name || !first_name || !last_name || !gender || !date_of_birth) {
+    if (!gender || !date_of_birth) {
       return res.status(400).json({
         success: false,
-        message: "All required fields are missing",
+        message: "Gender and Date of Birth are required",
       });
     }
 
-    // ✅ Upload profile picture if provided
-    let profile_picture = null;
-    if (req.file) {
-      const uploaded = await uploadToCloudinary(req.file.buffer);
-      profile_picture = uploaded.secure_url;
-    }
+    const userId = req.user.id;
 
-    const languagePrefJSON = language_preferences
-      ? JSON.stringify([language_preferences])
-      : JSON.stringify([]);
+    await db.query(
+      `INSERT INTO user_profiles (user_id, gender, date_of_birth, alternate_phone, profile_picture)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+       gender = VALUES(gender),
+       date_of_birth = VALUES(date_of_birth),
+       alternate_phone = VALUES(alternate_phone),
+       profile_picture = COALESCE(VALUES(profile_picture), profile_picture)`,
+      [userId, gender, date_of_birth, alternate_phone, profile_picture]
+    );
 
-    // ✅ Check if profile exists
-    const [existingProfile] = await db.query(
-      "SELECT * FROM user_profiles WHERE user_id = ?",
+    return res.json({
+      success: true,
+      message: "Profile saved successfully",
+    });
+
+  } catch (error) {
+    console.error("SQL Error while saving profile:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error saving profile",
+      error: error.sqlMessage || error.message
+    });
+  }
+};
+
+// ✅ Get profile details
+export const getProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [rows] = await db.query(
+      `SELECT users.name, users.email, users.phone_number, 
+              user_profiles.gender, user_profiles.date_of_birth, 
+              user_profiles.alternate_phone, user_profiles.profile_picture
+       FROM users
+       LEFT JOIN user_profiles ON users.id = user_profiles.user_id
+       WHERE users.id = ?`,
       [userId]
     );
 
-    if (existingProfile.length > 0) {
-      await db.query(
-        `UPDATE user_profiles
-         SET full_name=?, first_name=?, last_name=?, alternate_phone=?, gender=?, date_of_birth=?, 
-             profile_picture=?, language_preferences=?, timezone=?, updated_at=NOW()
-         WHERE user_id=?`,
-        [
-          full_name,
-          first_name,
-          last_name,
-          alternate_phone,
-          gender,
-          date_of_birth,
-          profile_picture || existingProfile[0].profile_picture, // 
-          languagePrefJSON,
-          timezone,
-          userId,
-        ]
-      );
-
-      return res
-        .status(200)
-        .json({ success: true, message: "Profile updated successfully" });
-    } else {
-      await db.query(
-        `INSERT INTO user_profiles 
-         (user_id, full_name, first_name, last_name, alternate_phone, gender, date_of_birth,
-          profile_picture, language_preferences, timezone, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-        [
-          userId,
-          full_name,
-          first_name,
-          last_name,
-          alternate_phone,
-          gender,
-          date_of_birth,
-          profile_picture,
-          languagePrefJSON,
-          timezone,
-        ]
-      );
-
-      return res
-        .status(201)
-        .json({ success: true, message: "Profile created successfully" });
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Profile not found" });
     }
+
+    return res.json({ success: true, data: rows[0] });
+
   } catch (error) {
-    console.error("❌ Profile Save Error:", error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Server error while saving profile",
-    });
+    console.error("Get profile error:", error);
+    res.status(500).json({ success: false, message: "Unable to fetch profile" });
   }
 };
