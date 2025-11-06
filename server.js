@@ -15,6 +15,7 @@ import profileRoutes from "./routes/profileRoutes.js";
 import doctorRoutes from "./routes/doctorRoutes.js";
 import appointmentRoutes from "./routes/appointmentRoutes.js"; // ✅ New Appointment Feature
 import patientRoutes from "./routes/patientRoutes.js";
+
 // ✅ Load environment variables
 dotenv.config();
 
@@ -62,11 +63,31 @@ app.use("/api/doctors", doctorRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/patients", patientRoutes);
 
+// ✅ Cloudinary connection test route
+app.get("/api/test-cloudinary", async (req, res) => {
+  try {
+    const result = await cloudinary.api.ping();
+    res.status(200).json({
+      success: true,
+      message: "✅ Cloudinary connected successfully!",
+      result,
+    });
+  } catch (error) {
+    console.error("❌ Cloudinary Test Error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
 // ✅ File upload route
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ success: false, message: "No file uploaded" });
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded" });
     }
 
     const result = await cloudinary.uploader.upload(req.file.path, {
@@ -82,7 +103,11 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Cloudinary upload error:", error);
-    res.status(500).json({ success: false, message: "File upload failed", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "File upload failed",
+      error: error.message,
+    });
   }
 });
 

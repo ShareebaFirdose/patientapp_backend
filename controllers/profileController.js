@@ -1,4 +1,6 @@
 import db from "../config/db.js";
+import cloudinary from "../utils/cloudinary.js"; // ✅ make sure cloudinary is configured in utils/cloudinary.js
+import fs from "fs";
 
 // ✅ Check if profile exists
 export const checkProfile = async (req, res) => {
@@ -18,12 +20,13 @@ export const checkProfile = async (req, res) => {
   }
 };
 
-// ✅ Create or update profile (final version)
+// ✅ Create or update profile (final fixed version)
 export const createProfile = async (req, res) => {
   try {
-    const { gender, date_of_birth, alternate_phone } = req.body;
-    const profile_picture = req.body.profile_picture || null;
+    let { gender, date_of_birth, alternate_phone, profile_picture } = req.body;
+    const userId = req.user.id;
 
+    // Validation
     if (!gender || !date_of_birth) {
       return res.status(400).json({
         success: false,
@@ -31,8 +34,31 @@ export const createProfile = async (req, res) => {
       });
     }
 
-    const userId = req.user.id;
+    // ✅ Convert DOB into MySQL-safe format (YYYY-MM-DD)
+    const formattedDOB = new Date(date_of_birth).toISOString().split("T")[0];
 
+    // ✅ Handle image upload (optional)
+    if (req.file) {
+      try {
+        const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+          folder: "predcare_profiles",
+          resource_type: "image",
+        });
+        profile_picture = uploadResult.secure_url;
+
+        // Delete local file after upload
+        fs.unlinkSync(req.file.path);
+      } catch (uploadErr) {
+        console.error("Cloudinary Upload Error:", uploadErr);
+        return res.status(500).json({
+          success: false,
+          message: "Error uploading profile picture",
+          error: uploadErr.message,
+        });
+      }
+    }
+
+    // ✅ Save or update user profile
     await db.query(
       `INSERT INTO user_profiles (user_id, gender, date_of_birth, alternate_phone, profile_picture)
        VALUES (?, ?, ?, ?, ?)
@@ -41,12 +67,19 @@ export const createProfile = async (req, res) => {
        date_of_birth = VALUES(date_of_birth),
        alternate_phone = VALUES(alternate_phone),
        profile_picture = COALESCE(VALUES(profile_picture), profile_picture)`,
-      [userId, gender, date_of_birth, alternate_phone, profile_picture]
+      [userId, gender, formattedDOB, alternate_phone || "N/A", profile_picture || null]
     );
 
     return res.json({
       success: true,
       message: "Profile saved successfully",
+      profile: {
+        user_id: userId,
+        gender,
+        date_of_birth: formattedDOB,
+        alternate_phone,
+        profile_picture,
+      },
     });
 
   } catch (error) {
@@ -54,7 +87,7 @@ export const createProfile = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Error saving profile",
-      error: error.sqlMessage || error.message
+      error: error.sqlMessage || error.message,
     });
   }
 };
@@ -76,6 +109,11 @@ export const getProfile = async (req, res) => {
 
     if (!rows.length) {
       return res.status(404).json({ success: false, message: "Profile not found" });
+    }
+
+    // ✅ Format date for consistent frontend display
+    if (rows[0].date_of_birth) {
+      rows[0].date_of_birth = new Date(rows[0].date_of_birth).toISOString().split("T")[0];
     }
 
     return res.json({ success: true, data: rows[0] });
