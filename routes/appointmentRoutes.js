@@ -1,12 +1,13 @@
 import express from "express";
-import { bookAppointment, getAppointmentsByPatient } from "../controllers/appointmentController.js";
+import {
+  bookAppointment,
+  getAppointmentsByUser,
+} from "../controllers/appointmentController.js";
+import { authenticateJWT } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// ✅ Book new appointment
-router.post("/book", bookAppointment);
-
-// ✅ Fetch appointments by patient
-router.get("/patient/:patient_id", getAppointmentsByPatient);
+router.post("/book", authenticateJWT, bookAppointment);
+router.get("/my-appointments", authenticateJWT, getAppointmentsByUser);
 
 export default router;

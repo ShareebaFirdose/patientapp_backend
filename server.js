@@ -1,7 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-import bodyParser from "body-parser";
 import morgan from "morgan";
 import db from "./config/db.js";
 import cloudinary from "./utils/cloudinary.js";
@@ -13,28 +12,34 @@ import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import profileRoutes from "./routes/profileRoutes.js";
 import doctorRoutes from "./routes/doctorRoutes.js";
-import appointmentRoutes from "./routes/appointmentRoutes.js"; // ✅ New Appointment Feature
+import appointmentRoutes from "./routes/appointmentRoutes.js";
 import patientRoutes from "./routes/patientRoutes.js";
+import doctorAvailabilityRoutes from "./routes/doctorAvailabilityRoutes.js";
+import videoRoutes from "./routes/videoRoutes.js";
+
+
+// ✅ ✅ NEW Razorpay route
+import paymentRoutes from "./routes/paymentRoutes.js"; // 👈 Add this line
 
 // ✅ Load environment variables
 dotenv.config();
 
-// ✅ Initialize Express
+// ✅ Initialize Express app
 const app = express();
 
-// ✅ Middleware stack
+// ✅ Core Middlewares
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "10mb" }));
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(morgan("dev")); // Logs API requests in console
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan("dev"));
 
-// ✅ Multer file upload config
+// ✅ Multer storage configuration (for uploads)
 const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
 const upload = multer({ storage });
 
-// ✅ Test root route
+// ✅ Root test route
 app.get("/", (req, res) => {
   res.status(200).send({
     success: true,
@@ -44,26 +49,33 @@ app.get("/", (req, res) => {
   });
 });
 
-// ✅ MySQL connection check (async-safe)
+// ✅ MySQL connection check
 (async () => {
   try {
     await db.getConnection();
     console.log("✅ MySQL Connected Successfully!");
   } catch (err) {
     console.error("❌ Database connection failed:", err.message);
-    process.exit(1); // Stop app if DB fails
+    process.exit(1);
   }
 })();
 
 // ✅ API Routes
+
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/doctors", doctorRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/patients", patientRoutes);
+app.use("/api/doctor_availability", doctorAvailabilityRoutes);
+app.use("/api/video", videoRoutes);
 
-// ✅ Cloudinary connection test route
+
+// ✅ ✅ Add Payment Route (important!)
+app.use("/api/payment", paymentRoutes); // 👈 Now registered correctly
+
+// ✅ Cloudinary test route
 app.get("/api/test-cloudinary", async (req, res) => {
   try {
     const result = await cloudinary.api.ping();
@@ -76,18 +88,17 @@ app.get("/api/test-cloudinary", async (req, res) => {
     console.error("❌ Cloudinary Test Error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Cloudinary connection failed",
+      error: error.message,
     });
   }
 });
 
-// ✅ File upload route
+// ✅ File Upload Route (Uploads to Cloudinary)
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No file uploaded" });
+      return res.status(400).json({ success: false, message: "No file uploaded" });
     }
 
     const result = await cloudinary.uploader.upload(req.file.path, {
@@ -102,7 +113,7 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
       public_id: result.public_id,
     });
   } catch (error) {
-    console.error("❌ Cloudinary upload error:", error);
+    console.error("❌ Cloudinary Upload Error:", error);
     res.status(500).json({
       success: false,
       message: "File upload failed",
@@ -111,18 +122,18 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
   }
 });
 
-// ✅ Static assets (for uploaded files if needed)
+// ✅ Serve static uploads folder
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-// ✅ Catch-all 404 handler
+// ✅ 404 Route Handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: `Route not found: ${req.originalUrl}`,
+    message: `❌ Route not found: ${req.originalUrl}`,
   });
 });
 
-// ✅ Global error handler
+// ✅ Global Error Handler
 app.use((err, req, res, next) => {
   console.error("❌ Global Error:", err.stack);
   res.status(500).json({
@@ -132,7 +143,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ✅ Start Server
+// ✅ Start Express Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server running → http://localhost:${PORT}`);

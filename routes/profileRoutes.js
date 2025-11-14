@@ -1,13 +1,20 @@
 import express from "express";
 import multer from "multer";
-import { protect } from "../middleware/authMiddleware.js";
-import { checkProfile, getProfile, createProfile } from "../controllers/profileController.js";
+import { authenticateJWT } from "../middleware/authMiddleware.js";
+import {
+  checkProfile,
+  getProfile,
+  createProfile,
+} from "../controllers/profileController.js";
 
 const router = express.Router();
-const upload = multer({ dest: "uploads/" }); // temporary local folder before Cloudinary upload
 
-router.get("/check-profile", protect, checkProfile);
-router.get("/me", protect, getProfile);
-router.post("/create", protect, upload.single("profile_picture"), createProfile); // ✅ allows file upload
+// ✅ Multer for image upload (temporary local before Cloudinary)
+const upload = multer({ dest: "uploads/" });
+
+// ✅ Routes
+router.get("/check-profile", authenticateJWT, checkProfile);
+router.get("/me", authenticateJWT, getProfile);
+router.post("/create", authenticateJWT, upload.single("profile_picture"), createProfile);
 
 export default router;

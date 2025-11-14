@@ -1,51 +1,178 @@
-import db from "../config/db.js"; // adjust this import to your DB connection file
+import db from "../config/db.js";
 
-// ✅ Doctor Search API
-export const searchDoctors = async (req, res) => {
+/* ============================================================
+   GET ALL DOCTORS
+============================================================ */
+export const getAllDoctors = async (req, res) => {
   try {
     const { query } = req.query;
-
-    if (!query || query.trim() === "") {
-      return res.status(400).json({ success: false, message: "Search query is required" });
-    }
-
-    const searchTerm = `%${query}%`;
+    const search = query ? `%${query}%` : "%";
 
     const sql = `
       SELECT 
         d.id AS doctor_id,
+        u.name AS doctor_name,
+        u.email,
+        u.phone_number,
         d.specialization,
-        d.qualifications,
-        d.experience_years,
-        d.bio,
-        d.profile_image,
-        dc.in_person_fee,
-        dc.video_fee,
-        dc.home_visit_fee,
-        c.id AS clinic_id,
-        c.clinic_name
+        d.experience_years AS years_of_experience,
+        d.bio
       FROM doctors d
-      LEFT JOIN doctor_clinic dc ON dc.doctor_id = d.id
-      LEFT JOIN clinics c ON c.id = dc.clinic_id
-      WHERE 
-        d.specialization LIKE ? 
-        OR d.bio LIKE ?
-        OR c.clinic_name LIKE ?
-      GROUP BY d.id
+      JOIN users u ON d.user_id = u.id
+      WHERE d.status = 'active'
+      AND (u.name LIKE ? OR d.specialization LIKE ?)
+      ORDER BY u.name ASC
     `;
 
-    const [rows] = await db.execute(sql, [searchTerm, searchTerm, searchTerm]);
+    const [rows] = await db.query(sql, [search, search]);
 
-    if (rows.length === 0) {
-      return res.json({ success: true, data: [], message: "No matching doctors found." });
-    }
-
-    res.json({ success: true, data: rows });
+    res.status(200).json({
+      success: true,
+      data: rows,
+    });
   } catch (error) {
-    console.error("❌ Doctor search error:", error);
+    console.error("❌ getAllDoctors Error:", error);
     res.status(500).json({
       success: false,
-      message: "Internal Server Error",
+      message: "Failed to fetch doctors",
+      error: error.message,
+    });
+  }
+};
+
+/* ============================================================
+   GET DOCTOR BY ID — ALWAYS SHOW 3 DAYS AVAILABILITY
+============================================================ */
+export const getDoctorById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    /* ------------------ Fetch Doctor Basic Info ------------------ */
+    const [rows] = await db.query(
+      `
+      SELECT 
+        d.id AS doctor_id,
+        u.name AS doctor_name,
+        u.email,
+        u.phone_number,
+        d.specialization,
+        d.experience_years,
+        d.bio
+      FROM doctors d
+      JOIN users u ON d.user_id = u.id
+      WHERE d.id = ?
+      `,
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Doctor not found",
+      });
+    }
+
+    /* ------------------ Fetch Availability ------------------ */
+    const [availability] = await db.query(
+      `
+      SELECT 
+        id,
+        clinic_id,
+        doctor_id,
+        time_slots,
+        from_time,
+        to_time,
+        slot_duration,
+        consultation_type,
+        in_person_fee,
+        video_fee,
+        require_payment,
+        status
+      FROM doctor_availability
+      WHERE doctor_id = ? AND status = 1
+      ORDER BY id DESC
+      `,
+      [id]
+    );
+
+    /* ------------------ Helper to parse JSON safely ------------------ */
+    const safeJSON = (v) => {
+      try {
+        if (!v) return [];
+        if (typeof v === "object") return v;
+        return JSON.parse(v.toString().replace(/'/g, '"'));
+      } catch {
+        return [];
+      }
+    };
+
+    /* ------------------ Generate Time Slots Automatically ------------------ */
+    const generateTimeSlots = (from, to, duration = 30) => {
+      const toMinutes = (t) => {
+        const [h, m, s] = t.split(":").map(Number);
+        return h * 60 + m;
+      };
+
+      let start = toMinutes(from);
+      const end = toMinutes(to);
+      const slots = [];
+
+      while (start < end) {
+        const hh = String(Math.floor(start / 60)).padStart(2, "0");
+        const mm = String(start % 60).padStart(2, "0");
+        slots.push(`${hh}:${mm}`);
+        start += duration;
+      }
+
+      return slots;
+    };
+
+    /* ------------------ Generate Next 3 Days Always ------------------ */
+    const getNextThreeDays = () => {
+      const days = [];
+      const today = new Date();
+
+      for (let i = 0; i < 3; i++) {
+        const d = new Date();
+        d.setDate(today.getDate() + i);
+        days.push(d.toISOString().split("T")[0]);
+      }
+      return days;
+    };
+
+    /* ------------------ Format Final Availability ------------------ */
+    const formattedAvailability = availability.map((item) => {
+      let timeSlots = safeJSON(item.time_slots);
+
+      // If time_slots empty → auto generate using slot_duration
+      if (!timeSlots.length) {
+        timeSlots = generateTimeSlots(
+          item.from_time,
+          item.to_time,
+          item.slot_duration || 30
+        );
+      }
+
+      return {
+        ...item,
+        selected_dates: getNextThreeDays(),
+        time_slots: timeSlots,
+      };
+    });
+
+    /* ------------------ Final Response ------------------ */
+    res.status(200).json({
+      success: true,
+      data: {
+        ...rows[0],
+        availability: formattedAvailability,
+      },
+    });
+  } catch (error) {
+    console.error("❌ getDoctorById Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching doctor details",
       error: error.message,
     });
   }
