@@ -68,7 +68,7 @@ app.use("/api/profile", profileRoutes);
 app.use("/api/doctors", doctorRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/patients", patientRoutes);
-app.use("/api/doctor_availability", doctorAvailabilityRoutes);
+app.use("/doctor_availability", doctorAvailabilityRoutes);
 app.use("/api/video", videoRoutes);
 
 

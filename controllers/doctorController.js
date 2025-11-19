@@ -11,6 +11,7 @@ export const getAllDoctors = async (req, res) => {
     const sql = `
       SELECT 
         d.id AS doctor_id,
+        d.user_id AS user_id,        -- ⭐ Added
         u.name AS doctor_name,
         u.email,
         u.phone_number,
@@ -52,6 +53,7 @@ export const getDoctorById = async (req, res) => {
       `
       SELECT 
         d.id AS doctor_id,
+        d.user_id AS user_id,       -- ⭐ Added
         u.name AS doctor_name,
         u.email,
         u.phone_number,
@@ -95,7 +97,6 @@ export const getDoctorById = async (req, res) => {
       [id]
     );
 
-    /* ------------------ Helper to parse JSON safely ------------------ */
     const safeJSON = (v) => {
       try {
         if (!v) return [];
@@ -106,10 +107,9 @@ export const getDoctorById = async (req, res) => {
       }
     };
 
-    /* ------------------ Generate Time Slots Automatically ------------------ */
     const generateTimeSlots = (from, to, duration = 30) => {
       const toMinutes = (t) => {
-        const [h, m, s] = t.split(":").map(Number);
+        const [h, m] = t.split(":").map(Number);
         return h * 60 + m;
       };
 
@@ -127,7 +127,6 @@ export const getDoctorById = async (req, res) => {
       return slots;
     };
 
-    /* ------------------ Generate Next 3 Days Always ------------------ */
     const getNextThreeDays = () => {
       const days = [];
       const today = new Date();
@@ -140,11 +139,9 @@ export const getDoctorById = async (req, res) => {
       return days;
     };
 
-    /* ------------------ Format Final Availability ------------------ */
     const formattedAvailability = availability.map((item) => {
       let timeSlots = safeJSON(item.time_slots);
 
-      // If time_slots empty → auto generate using slot_duration
       if (!timeSlots.length) {
         timeSlots = generateTimeSlots(
           item.from_time,
@@ -160,7 +157,6 @@ export const getDoctorById = async (req, res) => {
       };
     });
 
-    /* ------------------ Final Response ------------------ */
     res.status(200).json({
       success: true,
       data: {
