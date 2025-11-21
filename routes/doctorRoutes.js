@@ -1,12 +1,15 @@
 import express from "express";
-import { getAllDoctors, getDoctorById } from "../controllers/doctorController.js";
+import { getAllDoctors, getDoctorById, getClinicById } from "../controllers/doctorController.js";
 
 const router = express.Router();
 
-// ✅ Route to search or list doctors
+// ✅ Route to search doctors and clinics
 router.get("/search", getAllDoctors);
 
-// ✅ Get single doctor details + availability
+// ✅ Get single clinic details + doctors
+router.get("/clinic/:id", getClinicById);
+
+// ✅ Get single doctor details + availability (MUST be last to avoid conflicts)
 router.get("/:id", getDoctorById);
 
 export default router;

@@ -46,16 +46,11 @@ const sendOtpSms = async (phone, otp, type = "login") => {
       ],
     };
 
-    console.log("📤 SMS Payload:", payload);
-
     const response = await axios.post(process.env.PINNACLE_BASE_URL, payload, {
       headers: { "Content-Type": "application/json" },
     });
 
-    console.log("📥 SMS Response:", response.data);
-
     if (!response.data || response.data.status.code !== "200") {
-      console.log("❌ SMS Delivery Failed:", response.data);
       return false;
     }
 
@@ -118,10 +113,7 @@ export const loginUser = async (req, res) => {
       user,
     });
   } catch (err) {
-    console.error("loginUser Error:", err.message);
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal server error" });
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
 
@@ -143,9 +135,10 @@ export const signupRequestOtp = async (req, res) => {
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
+    // IMPORTANT: Use 'inactive' instead of 'pending'
     await db.query(
       `INSERT INTO users (name, email, phone_number, otp, otp_expiry, status)
-       VALUES (?, ?, ?, ?, ?, 'pending')`,
+       VALUES (?, ?, ?, ?, ?, 'inactive')`,
       [name, email, phone_number, otp, expiresAt]
     );
 
@@ -157,7 +150,6 @@ export const signupRequestOtp = async (req, res) => {
       message: "Signup OTP sent successfully",
     });
   } catch (err) {
-    console.log("Signup OTP Error:", err.message);
     return res.status(500).json({
       success: false,
       message: "Failed to send signup OTP",
@@ -182,7 +174,8 @@ export const signupVerifyOtp = async (req, res) => {
 
     const user = rows[0];
 
-    if (user.status !== "pending")
+    // user should be inactive before verifying
+    if (user.status === "active")
       return res.status(400).json({ success: false, message: "Already verified" });
 
     if (otp !== user.otp)
@@ -206,13 +199,12 @@ export const signupVerifyOtp = async (req, res) => {
       token,
     });
   } catch (err) {
-    console.log("signupVerifyOtp Error:", err.message);
     return res.status(500).json({ success: false, message: "Verification failed" });
   }
 };
 
 /* ============================================================
-   LOGIN – SEND EMAIL OTP
+   EMAIL LOGIN OTP
 ============================================================ */
 export const requestLoginOtp = async (req, res) => {
   try {
@@ -234,13 +226,12 @@ export const requestLoginOtp = async (req, res) => {
 
     return res.json({ success: true, message: "Login OTP sent to email" });
   } catch (err) {
-    console.log("requestLoginOtp Error:", err.message);
     return res.status(500).json({ success: false, message: "Failed to send OTP" });
   }
 };
 
 /* ============================================================
-   LOGIN – VERIFY EMAIL OTP
+   VERIFY EMAIL LOGIN OTP
 ============================================================ */
 export const verifyLoginOtp = async (req, res) => {
   try {
@@ -278,7 +269,6 @@ export const verifyLoginOtp = async (req, res) => {
       user,
     });
   } catch (err) {
-    console.log("verifyLoginOtp Error:", err.message);
     return res.status(500).json({
       success: false,
       message: "OTP verification failed",
@@ -287,7 +277,7 @@ export const verifyLoginOtp = async (req, res) => {
 };
 
 /* ============================================================
-   LOGIN – SEND MOBILE OTP
+   MOBILE LOGIN OTP
 ============================================================ */
 export const requestMobileOtp = async (req, res) => {
   try {
@@ -318,7 +308,6 @@ export const requestMobileOtp = async (req, res) => {
 
     return res.json({ success: true, message: "Mobile OTP sent" });
   } catch (err) {
-    console.error("requestMobileOtp Error:", err.message);
     return res.status(500).json({
       success: false,
       message: "Failed to send mobile OTP",
@@ -327,7 +316,7 @@ export const requestMobileOtp = async (req, res) => {
 };
 
 /* ============================================================
-   LOGIN – VERIFY MOBILE OTP
+   VERIFY MOBILE LOGIN OTP
 ============================================================ */
 export const verifyMobileOtp = async (req, res) => {
   try {
@@ -365,7 +354,6 @@ export const verifyMobileOtp = async (req, res) => {
       user,
     });
   } catch (err) {
-    console.error("verifyMobileOtp Error:", err.message);
     return res.status(500).json({
       success: false,
       message: "OTP verification failed",
@@ -387,7 +375,6 @@ export const getLoggedInUser = async (req, res) => {
 
     return res.json({ success: true, user: rows[0] });
   } catch (err) {
-    console.error("getLoggedInUser Error:", err.message);
     return res.status(500).json({
       success: false,
       message: "Failed to fetch user data",

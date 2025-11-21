@@ -1,23 +1,25 @@
 import db from "../config/db.js";
 
 /* ============================================================
-   GET ALL DOCTORS
+   GET ALL DOCTORS + CLINICS (Combined Search)
 ============================================================ */
 export const getAllDoctors = async (req, res) => {
   try {
     const { query } = req.query;
     const search = query ? `%${query}%` : "%";
 
-    const sql = `
+    // Search for doctors
+    const doctorSql = `
       SELECT 
         d.id AS doctor_id,
-        d.user_id AS user_id,        -- ⭐ Added
+        d.user_id AS user_id,
         u.name AS doctor_name,
         u.email,
         u.phone_number,
         d.specialization,
         d.experience_years AS years_of_experience,
-        d.bio
+        d.bio,
+        'doctor' AS result_type
       FROM doctors d
       JOIN users u ON d.user_id = u.id
       WHERE d.status = 'active'
@@ -25,35 +27,68 @@ export const getAllDoctors = async (req, res) => {
       ORDER BY u.name ASC
     `;
 
-    const [rows] = await db.query(sql, [search, search]);
+    // Search for clinics
+    const clinicSql = `
+      SELECT 
+        c.id AS clinic_id,
+        c.name AS clinic_name,
+        c.email,
+        c.about,
+        c.line1,
+        c.line2,
+        c.city,
+        c.state,
+        c.country,
+        c.pincode,
+        c.location,
+        c.specialities,
+        c.contact_numbers,
+        'clinic' AS result_type
+      FROM clinics c
+      WHERE (c.status = 'active' OR c.status IS NULL)
+      AND c.name LIKE ?
+      ORDER BY c.name ASC
+    `;
+
+    const [doctors] = await db.query(doctorSql, [search, search]);
+    const [clinics] = await db.query(clinicSql, [search]);
+
+    // Combine results
+    const combinedResults = [
+      ...doctors.map(d => ({ ...d, result_type: 'doctor' })),
+      ...clinics.map(c => ({ ...c, result_type: 'clinic' }))
+    ];
 
     res.status(200).json({
       success: true,
-      data: rows,
+      data: combinedResults,
+      counts: {
+        doctors: doctors.length,
+        clinics: clinics.length
+      }
     });
   } catch (error) {
     console.error("❌ getAllDoctors Error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch doctors",
+      message: "Failed to fetch results",
       error: error.message,
     });
   }
 };
 
 /* ============================================================
-   GET DOCTOR BY ID — ALWAYS SHOW 3 DAYS AVAILABILITY
+   GET DOCTOR BY ID
 ============================================================ */
 export const getDoctorById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    /* ------------------ Fetch Doctor Basic Info ------------------ */
     const [rows] = await db.query(
       `
       SELECT 
         d.id AS doctor_id,
-        d.user_id AS user_id,       -- ⭐ Added
+        d.user_id AS user_id,
         u.name AS doctor_name,
         u.email,
         u.phone_number,
@@ -74,7 +109,6 @@ export const getDoctorById = async (req, res) => {
       });
     }
 
-    /* ------------------ Fetch Availability ------------------ */
     const [availability] = await db.query(
       `
       SELECT 
@@ -169,6 +203,91 @@ export const getDoctorById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching doctor details",
+      error: error.message,
+    });
+  }
+};
+
+/* ============================================================
+   GET CLINIC BY ID
+============================================================ */
+export const getClinicById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get clinic details
+    const [clinicRows] = await db.query(
+      `
+      SELECT 
+        c.id AS clinic_id,
+        c.name AS clinic_name,
+        c.email,
+        c.about,
+        c.line1,
+        c.line2,
+        c.city,
+        c.state,
+        c.country,
+        c.pincode,
+        c.location,
+        c.specialities,
+        c.contact_numbers
+      FROM clinics c
+      WHERE c.id = ? AND c.status = 'active'
+      `,
+      [id]
+    );
+
+    if (!clinicRows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Clinic not found",
+      });
+    }
+
+    // Get doctors working at this clinic
+    const [doctors] = await db.query(
+      `
+      SELECT DISTINCT
+        d.id AS doctor_id,
+        u.name AS doctor_name,
+        d.specialization,
+        d.experience_years
+      FROM doctor_availability da
+      JOIN doctors d ON da.doctor_id = d.id
+      JOIN users u ON d.user_id = u.id
+      WHERE da.clinic_id = ? AND d.status = 'active'
+      ORDER BY u.name ASC
+      `,
+      [id]
+    );
+
+    const safeJSON = (v) => {
+      try {
+        if (!v) return [];
+        if (typeof v === "object") return v;
+        return JSON.parse(v);
+      } catch {
+        return [];
+      }
+    };
+
+    const clinic = clinicRows[0];
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        ...clinic,
+        specialities: safeJSON(clinic.specialities),
+        contact_numbers: safeJSON(clinic.contact_numbers),
+        doctors: doctors
+      },
+    });
+  } catch (error) {
+    console.error("❌ getClinicById Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching clinic details",
       error: error.message,
     });
   }
