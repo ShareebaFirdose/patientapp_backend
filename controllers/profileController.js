@@ -1,12 +1,12 @@
 import db from "../config/db.js";
-import cloudinary from "../utils/cloudinary.js"; // ✅ make sure cloudinary is configured in utils/cloudinary.js
+import cloudinary from "../utils/cloudinary.js";
 import fs from "fs";
 
-// ✅ Check if profile exists
+// ✅ Check if profile exists (checking patients table)
 export const checkProfile = async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1",
+      "SELECT id FROM patients WHERE user_id = ? LIMIT 1",
       [req.user.id]
     );
 
@@ -16,15 +16,33 @@ export const checkProfile = async (req, res) => {
     });
   } catch (error) {
     console.error("Profile check error:", error);
-    return res.status(500).json({ success: false, message: "Error checking profile" });
+    return res.status(500).json({ 
+      success: false, 
+      message: "Error checking profile" 
+    });
   }
 };
 
-// ✅ Create or update profile (final fixed version)
+// ✅ Create or update profile in PATIENTS table
 export const createProfile = async (req, res) => {
   try {
-    let { gender, date_of_birth, alternate_phone, profile_picture } = req.body;
+    // 🔥 Access body fields correctly with multipart/form-data
+    console.log("📥 Raw req.body:", req.body);
+    console.log("📁 Raw req.file:", req.file);
+
+    let gender = req.body?.gender;
+    let date_of_birth = req.body?.date_of_birth;
+    let alternate_phone = req.body?.alternate_phone;
+    let profile_picture = null;
+    
     const userId = req.user.id;
+
+    console.log("🔥 Received profile data:", { 
+      gender, 
+      date_of_birth, 
+      alternate_phone, 
+      userId 
+    });
 
     // Validation
     if (!gender || !date_of_birth) {
@@ -35,91 +53,166 @@ export const createProfile = async (req, res) => {
     }
 
     // ✅ Convert DOB into MySQL-safe format (YYYY-MM-DD)
-    const formattedDOB = new Date(date_of_birth).toISOString().split("T")[0];
+    let formattedDOB;
+    try {
+      formattedDOB = new Date(date_of_birth).toISOString().split("T")[0];
+      console.log("📅 Formatted DOB:", formattedDOB);
+    } catch (dateErr) {
+      console.error("Date conversion error:", dateErr);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid date format",
+      });
+    }
 
     // ✅ Handle image upload (optional)
     if (req.file) {
       try {
+        console.log("📸 Uploading image to Cloudinary...");
         const uploadResult = await cloudinary.uploader.upload(req.file.path, {
           folder: "predcare_profiles",
           resource_type: "image",
         });
         profile_picture = uploadResult.secure_url;
+        console.log("✅ Image uploaded:", profile_picture);
 
         // Delete local file after upload
         fs.unlinkSync(req.file.path);
       } catch (uploadErr) {
-        console.error("Cloudinary Upload Error:", uploadErr);
-        return res.status(500).json({
-          success: false,
-          message: "Error uploading profile picture",
-          error: uploadErr.message,
-        });
+        console.error("❌ Cloudinary Upload Error:", uploadErr);
+        // Continue without image rather than failing completely
+        profile_picture = null;
       }
     }
 
-    // ✅ Save or update user profile
-    await db.query(
-      `INSERT INTO user_profiles (user_id, gender, date_of_birth, alternate_phone, profile_picture)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-       gender = VALUES(gender),
-       date_of_birth = VALUES(date_of_birth),
-       alternate_phone = VALUES(alternate_phone),
-       profile_picture = COALESCE(VALUES(profile_picture), profile_picture)`,
-      [userId, gender, formattedDOB, alternate_phone || "N/A", profile_picture || null]
-    );
+    // ✅ Save profile to PATIENTS table
+    try {
+      console.log("💾 Attempting to save profile for user:", userId);
+      
+      // First, check if patient profile already exists
+      const [existingPatient] = await db.query(
+        "SELECT id FROM patients WHERE user_id = ?",
+        [userId]
+      );
 
-    return res.json({
-      success: true,
-      message: "Profile saved successfully",
-      profile: {
-        user_id: userId,
-        gender,
-        date_of_birth: formattedDOB,
-        alternate_phone,
-        profile_picture,
-      },
-    });
+      if (existingPatient.length > 0) {
+        // Update existing patient profile
+        console.log("🔄 Updating existing patient profile...");
+        
+        // Build dynamic update query based on available fields
+        let updateFields = ["gender = ?", "date_of_birth = ?"];
+        let updateValues = [gender, formattedDOB];
+        
+        if (alternate_phone !== undefined && alternate_phone !== null) {
+          updateFields.push("phone = ?");
+          updateValues.push(alternate_phone);
+        }
+        
+        if (profile_picture) {
+          updateFields.push("profile_image = ?");
+          updateValues.push(profile_picture);
+        }
+        
+        updateValues.push(userId); // Add userId for WHERE clause
+        
+        const updateQuery = `UPDATE patients SET ${updateFields.join(", ")} WHERE user_id = ?`;
+        
+        await db.query(updateQuery, updateValues);
+        
+      } else {
+        // Insert new patient profile
+        console.log("➕ Inserting new patient profile...");
+        
+        await db.query(
+          `INSERT INTO patients (user_id, gender, date_of_birth, phone, profile_image, status)
+           VALUES (?, ?, ?, ?, ?, 'active')`,
+          [userId, gender, formattedDOB, alternate_phone || null, profile_picture || null]
+        );
+      }
+
+      console.log("✅ Profile saved successfully");
+
+      return res.json({
+        success: true,
+        message: "Profile saved successfully",
+        profile: {
+          user_id: userId,
+          gender,
+          date_of_birth: formattedDOB,
+          alternate_phone: alternate_phone || null,
+          profile_picture: profile_picture || null,
+        },
+      });
+
+    } catch (dbErr) {
+      console.error("❌ Database Error:", dbErr);
+      return res.status(500).json({
+        success: false,
+        message: "Database error while saving profile",
+        error: dbErr.sqlMessage || dbErr.message,
+      });
+    }
 
   } catch (error) {
-    console.error("SQL Error while saving profile:", error);
+    console.error("❌ General Error while saving profile:", error);
     return res.status(500).json({
       success: false,
       message: "Error saving profile",
-      error: error.sqlMessage || error.message,
+      error: error.message,
     });
   }
 };
 
-// ✅ Get profile details
+// ✅ Get profile details from PATIENTS table
 export const getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    // Join users and patients tables
     const [rows] = await db.query(
-      `SELECT users.name, users.email, users.phone_number, 
-              user_profiles.gender, user_profiles.date_of_birth, 
-              user_profiles.alternate_phone, user_profiles.profile_picture
+      `SELECT 
+        users.name, 
+        users.email, 
+        users.phone_number,
+        patients.gender, 
+        patients.date_of_birth, 
+        patients.phone as alternate_phone,
+        patients.profile_image as profile_picture,
+        patients.address,
+        patients.city,
+        patients.state,
+        patients.postal_code,
+        patients.country
        FROM users
-       LEFT JOIN user_profiles ON users.id = user_profiles.user_id
+       LEFT JOIN patients ON users.id = patients.user_id
        WHERE users.id = ?`,
       [userId]
     );
 
     if (!rows.length) {
-      return res.status(404).json({ success: false, message: "Profile not found" });
+      return res.status(404).json({ 
+        success: false, 
+        message: "Profile not found" 
+      });
     }
 
     // ✅ Format date for consistent frontend display
     if (rows[0].date_of_birth) {
-      rows[0].date_of_birth = new Date(rows[0].date_of_birth).toISOString().split("T")[0];
+      rows[0].date_of_birth = new Date(rows[0].date_of_birth)
+        .toISOString()
+        .split("T")[0];
     }
 
-    return res.json({ success: true, data: rows[0] });
+    return res.json({ 
+      success: true, 
+      data: rows[0] 
+    });
 
   } catch (error) {
     console.error("Get profile error:", error);
-    res.status(500).json({ success: false, message: "Unable to fetch profile" });
+    res.status(500).json({ 
+      success: false, 
+      message: "Unable to fetch profile" 
+    });
   }
 };
