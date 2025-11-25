@@ -3,11 +3,9 @@ import fs from "fs";
 import path from "path";
 
 /* =====================================
-   ✅ UPLOAD EMR – COMPATIBLE WITH YOUR DB.JS
+   ✅ UPLOAD EMR – WITH TITLE FIELD
 ===================================== */
 export const uploadEMR = async (req, res) => {
-  let connection;
-  
   try {
     console.log("\n📤 Upload EMR called");
 
@@ -19,23 +17,47 @@ export const uploadEMR = async (req, res) => {
       });
     }
 
+    const title = req.body?.title?.trim() || "";
     const document_type = req.body?.document_type || "Other";
+    const notes = req.body?.notes?.trim() || "";
     const user_id = req.user?.id;
 
     if (!user_id) {
       console.log("❌ No user id in token");
+      
+      // Delete uploaded file
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      
       return res.status(401).json({
         success: false,
         message: "Unauthorized user",
       });
     }
 
+    if (!title) {
+      console.log("❌ Title is required");
+      
+      // Delete uploaded file
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      
+      return res.status(400).json({
+        success: false,
+        message: "Title is required",
+      });
+    }
+
     const file_path = req.file.path.replace(/\\/g, "/");
 
     console.log("✅ USER ID:", user_id);
+    console.log("✅ TITLE:", title);
     console.log("✅ FILE:", req.file.originalname);
     console.log("✅ PATH:", file_path);
     console.log("✅ TYPE:", document_type);
+    console.log("✅ NOTES:", notes || "(none)");
 
     const doctor_id = null;
     const patient_id = user_id;
@@ -44,14 +66,14 @@ export const uploadEMR = async (req, res) => {
     // ✅ Get current timestamp
     const now = new Date();
 
-    // ✅ FIXED: Include created_at and updated_at in the INSERT
+    // ✅ INSERT with title field
     const sql = `
       INSERT INTO doctor_emr_documents
-      (doctor_id, patient_id, appointment_id, document_type, document_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (doctor_id, patient_id, appointment_id, title, document_type, document_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    const values = [doctor_id, patient_id, appointment_id, document_type, file_path, now, now];
+    const values = [doctor_id, patient_id, appointment_id, title, document_type, file_path, now, now];
 
     console.log("📝 Inserting into DB...");
     console.log("📋 Values:", values);
@@ -68,9 +90,11 @@ export const uploadEMR = async (req, res) => {
       message: "Document uploaded successfully",
       data: {
         id: rows.insertId,
+        title: title,
         document_type: document_type,
         document_path: file_path,
         patient_id: patient_id,
+        notes: notes,
         created_at: now,
         updated_at: now,
       },
@@ -122,6 +146,7 @@ export const getMyDocuments = async (req, res) => {
         doctor_id,
         patient_id,
         appointment_id,
+        title,
         document_type,
         document_path,
         created_at,
@@ -163,7 +188,7 @@ export const downloadEMR = async (req, res) => {
 
   try {
     const sql = `
-      SELECT document_path, patient_id, document_type 
+      SELECT document_path, patient_id, document_type, title 
       FROM doctor_emr_documents 
       WHERE id = ?
     `;

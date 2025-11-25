@@ -16,8 +16,6 @@ router.get("/get-token", async (req, res) => {
       });
     }
 
-    // Get API key from environment or generate it from dashboard
-    // You need to add this to your .env file
     const API_KEY = process.env.VIDEOSDK_API_KEY;
 
     if (!API_KEY) {
@@ -42,10 +40,10 @@ router.get("/get-token", async (req, res) => {
     res.json({ success: true, token });
   } catch (error) {
     console.error("Token error:", error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: "Failed to generate token",
-      error: error.message 
+      error: error.message,
     });
   }
 });
@@ -90,17 +88,17 @@ router.post("/create-meeting", async (req, res) => {
       throw new Error(data.message || "Failed to create meeting");
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       roomId: data.roomId,
-      message: "Meeting room created successfully" 
+      message: "Meeting room created successfully",
     });
   } catch (error) {
     console.error("Create meeting error:", error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: "Failed to create meeting",
-      error: error.message 
+      error: error.message,
     });
   }
 });
@@ -143,16 +141,16 @@ router.post("/validate-meeting/:roomId", async (req, res) => {
 
     const data = await response.json();
 
-    res.json({ 
-      success: response.ok, 
+    res.json({
+      success: response.ok,
       valid: data.roomId === roomId,
-      roomId: data.roomId 
+      roomId: data.roomId,
     });
   } catch (error) {
     console.error("Validate meeting error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Failed to validate meeting" 
+    res.status(500).json({
+      success: false,
+      message: "Failed to validate meeting",
     });
   }
 });
