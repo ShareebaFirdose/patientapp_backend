@@ -1,6 +1,4 @@
-// controllers/paymentController.js
-// ✅ COMPLETE FIX - Handles array spreading issue
-
+// controllers/paymentController.js - FINAL FIX
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import db from "../config/db.js";
@@ -51,7 +49,7 @@ export const verifyPayment = async (req, res) => {
       patient_email,
       patient_phone,
       appointment_date,
-      appointment_slot_time, // This might be an array or string
+      appointment_slot_time, // JSON string from frontend
       start_time,
       end_time,
       appointment_fee,
@@ -64,9 +62,10 @@ export const verifyPayment = async (req, res) => {
       slot_duration,
     } = req.body;
 
-    console.log("📥 RAW appointment_slot_time:", appointment_slot_time);
-    console.log("📥 Type:", typeof appointment_slot_time);
-    console.log("📥 Is Array:", Array.isArray(appointment_slot_time));
+    console.log("🔥 Received appointment_slot_time:", appointment_slot_time);
+    console.log("🔥 Type:", typeof appointment_slot_time);
+    console.log("🔥 start_time:", start_time);
+    console.log("🔥 end_time:", end_time);
 
     // Verify Razorpay signature
     const generatedSignature = crypto
@@ -81,38 +80,50 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
-    // ✅ CRITICAL FIX: Convert to JSON string IMMEDIATELY
+    // ✅ Ensure appointment_slot_time is JSON string
     let slotTimeJSON;
-    
-    if (Array.isArray(appointment_slot_time)) {
-      // Already an array, stringify it
-      slotTimeJSON = JSON.stringify(appointment_slot_time);
-      console.log("✅ Converted array to JSON:", slotTimeJSON);
-    } else if (typeof appointment_slot_time === 'string') {
-      // Check if it's already valid JSON
+    if (typeof appointment_slot_time === 'string') {
       try {
-        const parsed = JSON.parse(appointment_slot_time);
-        slotTimeJSON = JSON.stringify(parsed); // Re-stringify to ensure format
-        console.log("✅ Valid JSON string:", slotTimeJSON);
+        // Validate it's proper JSON
+        JSON.parse(appointment_slot_time);
+        slotTimeJSON = appointment_slot_time;
       } catch (e) {
-        // Not JSON, wrap it in array
+        // Not JSON, wrap it
         slotTimeJSON = JSON.stringify([appointment_slot_time]);
-        console.log("✅ Wrapped string in array:", slotTimeJSON);
       }
+    } else if (Array.isArray(appointment_slot_time)) {
+      slotTimeJSON = JSON.stringify(appointment_slot_time);
     } else {
-      // Fallback for any other type
       slotTimeJSON = JSON.stringify([String(appointment_slot_time)]);
-      console.log("✅ Fallback conversion:", slotTimeJSON);
+    }
+
+    console.log("✅ Final slotTimeJSON:", slotTimeJSON);
+
+    // Validate time format
+    if (!start_time || start_time === "null" || start_time.includes("NaN")) {
+      console.error("❌ Invalid start_time:", start_time);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid start_time format",
+      });
+    }
+
+    if (!end_time || end_time === "null" || end_time.includes("NaN")) {
+      console.error("❌ Invalid end_time:", end_time);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid end_time format",
+      });
     }
 
     // Generate appointment ID
     const appointmentId = `APPT-${String(Math.floor(10000 + Math.random() * 90000)).padStart(5, "0")}`;
 
-    // Generate VideoSDK meeting ID and token
+    // Generate meeting credentials
     const meetingId = crypto.randomUUID();
     const token = crypto.randomUUID();
 
-    // ✅ Build the INSERT query
+    // ✅ Build INSERT query with correct parameter count
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -149,9 +160,9 @@ export const verifyPayment = async (req, res) => {
       doctor_id,                  // 5
       clinic_id || null,          // 6
       appointment_date,           // 7
-      slotTimeJSON,               // 8  ✅ JSON STRING (not array!)
-      start_time,                 // 9
-      end_time,                   // 10
+      slotTimeJSON,               // 8  ✅ JSON STRING
+      start_time,                 // 9  ✅ "HH:MM:SS"
+      end_time,                   // 10 ✅ "HH:MM:SS"
       appointment_fee,            // 11
       fee_type || "video_fee",    // 12
       consultation_type,          // 13
@@ -168,10 +179,9 @@ export const verifyPayment = async (req, res) => {
 
     // Verify counts
     const placeholders = (insertQuery.match(/\?/g) || []).length;
-    console.log("🔢 SQL placeholders:", placeholders);
-    console.log("🔢 Values provided:", values.length);
-    console.log("📦 Slot time value (index 7):", values[7]);
-    console.log("📦 Type:", typeof values[7]);
+    console.log("📊 SQL placeholders:", placeholders);
+    console.log("📊 Values provided:", values.length);
+    console.log("📦 Values:", values);
 
     if (placeholders !== values.length) {
       throw new Error(`SQL parameter mismatch: ${placeholders} placeholders vs ${values.length} values`);
