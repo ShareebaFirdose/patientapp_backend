@@ -7,6 +7,9 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
+// ========================================================================
+// CREATE ORDER
+// ========================================================================
 export const createOrder = async (req, res) => {
   try {
     const { amount, currency } = req.body;
@@ -36,6 +39,9 @@ export const createOrder = async (req, res) => {
   }
 };
 
+// ========================================================================
+// VERIFY PAYMENT + CREATE APPOINTMENT
+// ========================================================================
 export const verifyPayment = async (req, res) => {
   try {
     let {
@@ -61,11 +67,13 @@ export const verifyPayment = async (req, res) => {
       slot_duration,
     } = req.body;
 
-    console.log("🔥 Received slots:", appointment_slot_time);
-    console.log("🔥 start_time (frontend):", start_time);
-    console.log("🔥 end_time (frontend):", end_time);
+    console.log("🔥 Received frontend slots:", appointment_slot_time);
+    console.log("🔥 Frontend start_time:", start_time);
+    console.log("🔥 Frontend end_time:", end_time);
 
-    // ✅ Verify Razorpay signature
+    // --------------------------------------------------------------------
+    // Verify Razorpay signature
+    // --------------------------------------------------------------------
     const generatedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -78,7 +86,9 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
-    // ✅ SAFELY convert to array
+    // --------------------------------------------------------------------
+    // Parse slot array safely
+    // --------------------------------------------------------------------
     let parsedSlots;
     try {
       parsedSlots = Array.isArray(appointment_slot_time)
@@ -88,7 +98,9 @@ export const verifyPayment = async (req, res) => {
       parsedSlots = [appointment_slot_time];
     }
 
-    // ✅ Convert time (AM/PM or 24h) to minutes
+    // --------------------------------------------------------------------
+    // Safe AM/PM → minutes conversion
+    // --------------------------------------------------------------------
     const convertToMinutes = (timeStr) => {
       if (!timeStr) return null;
 
@@ -117,22 +129,21 @@ export const verifyPayment = async (req, res) => {
       return hours * 60 + minutes;
     };
 
-    // ✅ Rebuild times SAFELY ON SERVER
+    // --------------------------------------------------------------------
+    // Recompute start / end time fully on backend (bulletproof)
+    // --------------------------------------------------------------------
     const minutesList = [];
 
     for (const slot of parsedSlots) {
       const mins = convertToMinutes(slot);
-
-      if (mins !== null) {
-        minutesList.push(mins);
-      }
+      if (mins !== null) minutesList.push(mins);
     }
 
     if (minutesList.length === 0) {
-      console.error("❌ Invalid slots, cannot compute time:", parsedSlots);
+      console.error("❌ Invalid slot values received:", parsedSlots);
       return res.status(400).json({
         success: false,
-        message: "Invalid appointment slots",
+        message: "Invalid appointment slot times",
       });
     }
 
@@ -155,16 +166,22 @@ export const verifyPayment = async (req, res) => {
       "0"
     )}:00`;
 
-    // ✅ Force overwrite frontend time
+    // --------------------------------------------------------------------
+    // OVERRIDE frontend invalid times (this fixes NaN permanently)
+    // --------------------------------------------------------------------
     start_time = finalStartTime;
     end_time = finalEndTime;
 
-    console.log("✅ SERVER COMPUTED TIME:", { start_time, end_time });
+    console.log("✅ Server computed times:", { start_time, end_time });
 
-    // ✅ Ensure appointment_slot_time saved as JSON
+    // --------------------------------------------------------------------
+    // Save slots as JSON
+    // --------------------------------------------------------------------
     const slotTimeJSON = JSON.stringify(parsedSlots);
 
-    // ✅ Generate appointment ID
+    // --------------------------------------------------------------------
+    // Generate appointment + meeting IDs
+    // --------------------------------------------------------------------
     const appointmentId = `APPT-${String(
       Math.floor(10000 + Math.random() * 90000)
     ).padStart(5, "0")}`;
@@ -172,6 +189,9 @@ export const verifyPayment = async (req, res) => {
     const meetingId = crypto.randomUUID();
     const token = crypto.randomUUID();
 
+    // --------------------------------------------------------------------
+    // INSERT QUERY
+    // --------------------------------------------------------------------
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -225,13 +245,14 @@ export const verifyPayment = async (req, res) => {
     ];
 
     const placeholders = (insertQuery.match(/\?/g) || []).length;
+
     if (placeholders !== values.length) {
       throw new Error(
         `SQL mismatch: ${placeholders} placeholders vs ${values.length} values`
       );
     }
 
-    console.log("💾 INSERTING appointment...");
+    console.log("💾 Saving appointment...");
     await db.query(insertQuery, values);
 
     res.json({
