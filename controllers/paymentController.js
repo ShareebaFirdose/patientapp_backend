@@ -38,7 +38,7 @@ export const createOrder = async (req, res) => {
   }
 };
 
-// ✅ VERIFY PAYMENT & CREATE APPOINTMENT
+// ✅ VERIFY PAYMENT & CREATE APPOINTMENT (FIXED)
 export const verifyPayment = async (req, res) => {
   try {
     const {
@@ -94,7 +94,7 @@ export const verifyPayment = async (req, res) => {
     const meetingId = crypto.randomUUID();
     const token = crypto.randomUUID();
 
-    // ✅ FIXED: Insert with correct column count
+    // ✅ FIXED: Correct column count matching values
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -124,31 +124,33 @@ export const verifyPayment = async (req, res) => {
     `;
 
     const values = [
-      appointmentId,
-      patient_id,
-      patient_name || "",
-      patient_email || "",
-      doctor_id,
-      clinic_id || null,
-      appointment_date,
-      slotTimeForDB, // ✅ JSON string of array
-      start_time,
-      end_time,
-      appointment_fee,
-      fee_type || "video_fee",
-      consultation_type,
-      "follow_up",
-      "pending",
-      "paid",
-      razorpay_payment_id,
-      meetingId,
-      token,
-      reason || "",
-      symptoms || "",
-      medications || "",
-      "online", // payment_type
+      appointmentId,              // 1
+      patient_id,                 // 2
+      patient_name || "",         // 3
+      patient_email || "",        // 4
+      doctor_id,                  // 5
+      clinic_id || null,          // 6
+      appointment_date,           // 7
+      slotTimeForDB,              // 8 - JSON string of array
+      start_time,                 // 9
+      end_time,                   // 10
+      appointment_fee,            // 11
+      fee_type || "video_fee",    // 12
+      consultation_type,          // 13
+      "follow_up",                // 14
+      "pending",                  // 15
+      "paid",                     // 16
+      razorpay_payment_id,        // 17
+      meetingId,                  // 18
+      token,                      // 19
+      reason || "",               // 20
+      symptoms || "",             // 21
+      medications || "",          // 22
+      "online",                   // 23 - payment_type
     ];
 
+    console.log("✅ Column count:", insertQuery.match(/\?/g).length);
+    console.log("✅ Value count:", values.length);
     console.log("✅ Executing INSERT with values:", values);
 
     await db.query(insertQuery, values);
