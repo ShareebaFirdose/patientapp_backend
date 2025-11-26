@@ -279,7 +279,7 @@ export const verifyPayment = async (req, res) => {
     const meeting_id = uuidv4();
     const token = uuidv4();
 
-    // ✅ FINAL INSERT (FIXED)
+    // ✅ FIXED INSERT - Correct column count
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -308,29 +308,32 @@ export const verifyPayment = async (req, res) => {
     `;
 
     const insertValues = [
-      appointment_id,
-      payload.patient_id,
-      payload.patient_name,
-      payload.patient_email,
-      payload.doctor_id,
-      clinic_id,
-      payload.appointment_date,
-      slotString,
-      payload.start_time,
-      payload.end_time,
-      payload.appointment_fee,
-      payload.fee_type || "",
-      payload.consultation_type || "",
-      appointment_type,
-      "pending",
-      "paid",
-      payload.razorpay_payment_id,
-      meeting_id,
-      token,
-      payload.reason || "",
-      payload.symptoms || "",
-      payload.medications || "",
+      appointment_id,                    // 1
+      payload.patient_id,                // 2
+      payload.patient_name,              // 3
+      payload.patient_email,             // 4
+      payload.doctor_id,                 // 5
+      clinic_id,                         // 6
+      payload.appointment_date,          // 7
+      slotString,                        // 8 - appointment_slot_time
+      payload.start_time,                // 9 - start_time
+      payload.end_time,                  // 10 - end_time
+      payload.appointment_fee,           // 11
+      payload.fee_type || "",            // 12
+      payload.consultation_type || "",   // 13
+      appointment_type,                  // 14
+      "pending",                         // 15
+      "paid",                            // 16
+      payload.razorpay_payment_id,       // 17
+      meeting_id,                        // 18
+      token,                             // 19
+      payload.reason || "",              // 20
+      payload.symptoms || "",            // 21
+      payload.medications || "",         // 22
     ];
+
+    console.log('🔍 INSERT VALUES COUNT:', insertValues.length);
+    console.log('🔍 INSERT QUERY PLACEHOLDERS:', (insertQuery.match(/\?/g) || []).length);
 
     await db.query(insertQuery, insertValues);
 
