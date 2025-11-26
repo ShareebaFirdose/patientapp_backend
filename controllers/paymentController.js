@@ -51,7 +51,7 @@ export const verifyPayment = async (req, res) => {
       patient_email,
       patient_phone,
       appointment_date,
-      appointment_slot_time, // ✅ This is now ALWAYS an array
+      appointment_slot_time,
       start_time,
       end_time,
       appointment_fee,
@@ -67,7 +67,7 @@ export const verifyPayment = async (req, res) => {
     console.log("✅ Received appointment_slot_time:", appointment_slot_time);
     console.log("✅ Type:", Array.isArray(appointment_slot_time) ? "Array" : typeof appointment_slot_time);
 
-    // Verify signature
+    // Verify Razorpay signature
     const generatedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -88,13 +88,13 @@ export const verifyPayment = async (req, res) => {
     console.log("✅ Storing in DB as:", slotTimeForDB);
 
     // Generate appointment ID
-    const appointmentId = `APPT-${String(Math.floor(100000 + Math.random() * 900000)).padStart(5, "0")}`;
+    const appointmentId = `APPT-${String(Math.floor(10000 + Math.random() * 90000)).padStart(5, "0")}`;
 
-    // Generate VideoSDK meeting ID and token (if needed)
+    // Generate VideoSDK meeting ID and token
     const meetingId = crypto.randomUUID();
     const token = crypto.randomUUID();
 
-    // Insert appointment
+    // ✅ FIXED: Insert with correct column count
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -118,23 +118,24 @@ export const verifyPayment = async (req, res) => {
         token,
         reason,
         symptoms,
-        medications
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        medications,
+        payment_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    await db.query(insertQuery, [
+    const values = [
       appointmentId,
       patient_id,
-      patient_name,
-      patient_email,
+      patient_name || "",
+      patient_email || "",
       doctor_id,
       clinic_id || null,
       appointment_date,
-      slotTimeForDB, // ✅ JSON string
+      slotTimeForDB, // ✅ JSON string of array
       start_time,
       end_time,
       appointment_fee,
-      fee_type,
+      fee_type || "video_fee",
       consultation_type,
       "follow_up",
       "pending",
@@ -145,7 +146,12 @@ export const verifyPayment = async (req, res) => {
       reason || "",
       symptoms || "",
       medications || "",
-    ]);
+      "online", // payment_type
+    ];
+
+    console.log("✅ Executing INSERT with values:", values);
+
+    await db.query(insertQuery, values);
 
     console.log("✅ Appointment created successfully:", appointmentId);
 
@@ -164,10 +170,11 @@ export const verifyPayment = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("verifyPayment error:", error);
-    res.status(500).json({
+    console.error("❌ verifyPayment error:", error);
+    res.status(400).json({
       success: false,
-      message: error.message || "Payment verification failed",
+      message: "Failed to verify/save appointment",
+      error: error.message,
     });
   }
 };
