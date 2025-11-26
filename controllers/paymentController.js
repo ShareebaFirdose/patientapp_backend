@@ -1,5 +1,5 @@
 // controllers/paymentController.js
-// ✅ FIXED VERSION - Column count mismatch resolved
+// ✅ COMPLETE FIX - Handles array spreading issue
 
 import Razorpay from "razorpay";
 import crypto from "crypto";
@@ -51,7 +51,7 @@ export const verifyPayment = async (req, res) => {
       patient_email,
       patient_phone,
       appointment_date,
-      appointment_slot_time,
+      appointment_slot_time, // This might be an array or string
       start_time,
       end_time,
       appointment_fee,
@@ -64,8 +64,9 @@ export const verifyPayment = async (req, res) => {
       slot_duration,
     } = req.body;
 
-    console.log("📥 RECEIVED appointment_slot_time:", appointment_slot_time);
+    console.log("📥 RAW appointment_slot_time:", appointment_slot_time);
     console.log("📥 Type:", typeof appointment_slot_time);
+    console.log("📥 Is Array:", Array.isArray(appointment_slot_time));
 
     // Verify Razorpay signature
     const generatedSignature = crypto
@@ -80,29 +81,29 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
-    // ✅ CRITICAL FIX: Ensure appointment_slot_time is stored as a JSON string
-    let slotTimeForDB;
+    // ✅ CRITICAL FIX: Convert to JSON string IMMEDIATELY
+    let slotTimeJSON;
     
     if (Array.isArray(appointment_slot_time)) {
-      // If it's already an array, stringify it
-      slotTimeForDB = JSON.stringify(appointment_slot_time);
+      // Already an array, stringify it
+      slotTimeJSON = JSON.stringify(appointment_slot_time);
+      console.log("✅ Converted array to JSON:", slotTimeJSON);
     } else if (typeof appointment_slot_time === 'string') {
-      // If it's a string, check if it's already JSON
+      // Check if it's already valid JSON
       try {
         const parsed = JSON.parse(appointment_slot_time);
-        // If parseable, use as-is
-        slotTimeForDB = appointment_slot_time;
+        slotTimeJSON = JSON.stringify(parsed); // Re-stringify to ensure format
+        console.log("✅ Valid JSON string:", slotTimeJSON);
       } catch (e) {
-        // If not JSON, wrap in array and stringify
-        slotTimeForDB = JSON.stringify([appointment_slot_time]);
+        // Not JSON, wrap it in array
+        slotTimeJSON = JSON.stringify([appointment_slot_time]);
+        console.log("✅ Wrapped string in array:", slotTimeJSON);
       }
     } else {
-      // Fallback: convert to string array
-      slotTimeForDB = JSON.stringify([String(appointment_slot_time)]);
+      // Fallback for any other type
+      slotTimeJSON = JSON.stringify([String(appointment_slot_time)]);
+      console.log("✅ Fallback conversion:", slotTimeJSON);
     }
-
-    console.log("💾 STORING as JSON string:", slotTimeForDB);
-    console.log("💾 Length:", slotTimeForDB.length, "chars");
 
     // Generate appointment ID
     const appointmentId = `APPT-${String(Math.floor(10000 + Math.random() * 90000)).padStart(5, "0")}`;
@@ -111,7 +112,7 @@ export const verifyPayment = async (req, res) => {
     const meetingId = crypto.randomUUID();
     const token = crypto.randomUUID();
 
-    // ✅ SQL with 22 columns (matching your schema)
+    // ✅ Build the INSERT query
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -139,7 +140,7 @@ export const verifyPayment = async (req, res) => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    // ✅ CRITICAL: 22 values - appointment_slot_time is ONE value (JSON string)
+    // ✅ Build values array - 22 parameters
     const values = [
       appointmentId,              // 1
       patient_id,                 // 2
@@ -148,7 +149,7 @@ export const verifyPayment = async (req, res) => {
       doctor_id,                  // 5
       clinic_id || null,          // 6
       appointment_date,           // 7
-      slotTimeForDB,              // 8  ✅ SINGLE JSON STRING: '["10:00 AM","11:00 AM"]'
+      slotTimeJSON,               // 8  ✅ JSON STRING (not array!)
       start_time,                 // 9
       end_time,                   // 10
       appointment_fee,            // 11
@@ -165,37 +166,41 @@ export const verifyPayment = async (req, res) => {
       medications || "",          // 22
     ];
 
-    // Verify counts match
-    const columnCount = (insertQuery.match(/\?/g) || []).length;
-    console.log("📢 COLUMN COUNT:", columnCount);
-    console.log("📢 VALUE COUNT:", values.length);
-    console.log("📋 VALUE[7] (appointment_slot_time):", values[7]);
-    
-    if (columnCount !== values.length) {
-      throw new Error(`Column/Value mismatch: ${columnCount} columns vs ${values.length} values`);
+    // Verify counts
+    const placeholders = (insertQuery.match(/\?/g) || []).length;
+    console.log("🔢 SQL placeholders:", placeholders);
+    console.log("🔢 Values provided:", values.length);
+    console.log("📦 Slot time value (index 7):", values[7]);
+    console.log("📦 Type:", typeof values[7]);
+
+    if (placeholders !== values.length) {
+      throw new Error(`SQL parameter mismatch: ${placeholders} placeholders vs ${values.length} values`);
     }
 
-    // Execute insert
-    await db.query(insertQuery, values);
+    // ✅ Execute the insert
+    console.log("💾 Executing INSERT...");
+    const [result] = await db.query(insertQuery, values);
 
-    console.log("✅ Appointment created successfully:", appointmentId);
+    console.log("✅ Appointment created! ID:", appointmentId);
+    console.log("✅ Database insert ID:", result.insertId);
 
-    // Parse back to array for response
-    let slotsArray;
+    // Parse slot times for response
+    let parsedSlots;
     try {
-      slotsArray = JSON.parse(slotTimeForDB);
+      parsedSlots = JSON.parse(slotTimeJSON);
     } catch (e) {
-      slotsArray = [slotTimeForDB];
+      parsedSlots = [slotTimeJSON];
     }
 
+    // Return success response
     res.json({
       success: true,
       message: "Payment verified and appointment created",
       data: {
         appointment_id: appointmentId,
         appointment_date,
-        appointment_slot_time: slotsArray,
-        slot_count: Array.isArray(slotsArray) ? slotsArray.length : 1,
+        appointment_slot_time: parsedSlots,
+        slot_count: Array.isArray(parsedSlots) ? parsedSlots.length : 1,
         start_time,
         end_time,
         transaction_id: razorpay_payment_id,
@@ -203,12 +208,18 @@ export const verifyPayment = async (req, res) => {
         token,
       },
     });
+
   } catch (error) {
     console.error("❌ verifyPayment error:", error);
-    console.error("❌ Error SQL:", error.sql);
+    console.error("❌ Error details:", {
+      message: error.message,
+      code: error.code,
+      sql: error.sql,
+    });
+    
     res.status(400).json({
       success: false,
-      message: "Failed to verify/save appointment",
+      message: "Failed to verify payment and create appointment",
       error: error.message,
     });
   }
