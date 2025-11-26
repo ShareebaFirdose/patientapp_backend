@@ -7,18 +7,19 @@ on:
 
 jobs:
   deploy:
-    name: Deploy backend to EC2
     runs-on: ubuntu-latest
 
     steps:
-      - name: Connect and deploy on EC2
-        uses: appleboy/ssh-action@v1.0.0
+      - name: Connect and Deploy on EC2
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           script: |
+            echo "✅ Connected to EC2"
             cd /home/ec2-user/patientapp_backend
             git pull origin main
             npm install
-            pm2 restart all --update-env
+            pm2 restart patient-backend --update-env
+            echo "✅ Deployment finished"
