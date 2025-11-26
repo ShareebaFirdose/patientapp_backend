@@ -1,8 +1,45 @@
 // ============================================
-// SOLUTION 1: Store Multiple Slots as JSON
+// COMPLETE FIX - paymentController.js
 // ============================================
-// controllers/paymentController.js - UPDATED verifyPayment function
+import Razorpay from "razorpay";
+import crypto from "crypto";
+import db from "../config/db.js";
 
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+export const createOrder = async (req, res) => {
+  try {
+    const { amount, currency } = req.body;
+
+    const options = {
+      amount: amount,
+      currency: currency || "INR",
+      receipt: `receipt_${Date.now()}`,
+    };
+
+    const order = await razorpay.orders.create(options);
+
+    res.json({
+      success: true,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      key: process.env.RAZORPAY_KEY_ID,
+    });
+  } catch (error) {
+    console.error("createOrder error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to create order",
+      error: error.message,
+    });
+  }
+};
+
+// ✅ FIXED: Properly handle array of slots
 export const verifyPayment = async (req, res) => {
   try {
     const {
@@ -15,7 +52,7 @@ export const verifyPayment = async (req, res) => {
       patient_email,
       patient_phone,
       appointment_date,
-      appointment_slot_time,  // This is an ARRAY of slots
+      appointment_slot_time,  // This comes as array from frontend
       start_time,
       end_time,
       appointment_fee,
@@ -28,7 +65,9 @@ export const verifyPayment = async (req, res) => {
       slot_duration,
     } = req.body;
 
-    console.log("📋 Received slots:", appointment_slot_time);
+    console.log("📥 RAW appointment_slot_time:", appointment_slot_time);
+    console.log("📥 Type:", typeof appointment_slot_time);
+    console.log("📥 Is Array:", Array.isArray(appointment_slot_time));
 
     // Verify Razorpay signature
     const generatedSignature = crypto
@@ -43,21 +82,34 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
-    // ✅ Store multiple slots as JSON string
-    const slotsArray = Array.isArray(appointment_slot_time) 
-      ? appointment_slot_time 
-      : [appointment_slot_time];
-    
-    const slotTimeForDB = JSON.stringify(slotsArray);
-    
-    console.log("💾 Storing slots in DB:", slotTimeForDB);
+    // ✅ CRITICAL FIX: Convert array to JSON STRING
+    let slotTimeForDB;
+    if (Array.isArray(appointment_slot_time)) {
+      slotTimeForDB = JSON.stringify(appointment_slot_time);
+    } else if (typeof appointment_slot_time === 'string') {
+      // Already a string, check if it's valid JSON
+      try {
+        JSON.parse(appointment_slot_time);
+        slotTimeForDB = appointment_slot_time;
+      } catch (e) {
+        // Not JSON, wrap in array
+        slotTimeForDB = JSON.stringify([appointment_slot_time]);
+      }
+    } else {
+      slotTimeForDB = JSON.stringify([appointment_slot_time]);
+    }
 
-    // Generate IDs
+    console.log("💾 Storing in DB as STRING:", slotTimeForDB);
+
+    // Generate appointment ID
     const appointmentId = `APPT-${String(Math.floor(10000 + Math.random() * 90000)).padStart(5, "0")}`;
+
+    // Generate VideoSDK meeting ID and token
     const meetingId = crypto.randomUUID();
     const token = crypto.randomUUID();
 
-    // ✅ SINGLE appointment with multiple slots stored as JSON
+    // ✅ IMPORTANT: Your table has 22 columns (NO payment_type column)
+    // Based on the error, your INSERT has these 22 columns:
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -81,40 +133,53 @@ export const verifyPayment = async (req, res) => {
         token,
         reason,
         symptoms,
-        medications,
-        payment_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        medications
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
+    // ✅ Exactly 22 values matching 22 columns
     const values = [
-      appointmentId,
-      patient_id,
-      patient_name || "",
-      patient_email || "",
-      doctor_id,
-      clinic_id || null,
-      appointment_date,
-      slotTimeForDB,              // ✅ JSON array: ["10:00 AM", "10:15 AM", "10:30 AM"]
-      start_time,                 // First slot start time
-      end_time,                   // Last slot end time
-      appointment_fee,
-      fee_type || "video_fee",
-      consultation_type,
-      "follow_up",
-      "pending",
-      "paid",
-      razorpay_payment_id,
-      meetingId,
-      token,
-      reason || "",
-      symptoms || "",
-      medications || "",
-      "online",
+      appointmentId,              // 1
+      patient_id,                 // 2
+      patient_name || "",         // 3
+      patient_email || "",        // 4
+      doctor_id,                  // 5
+      clinic_id || null,          // 6
+      appointment_date,           // 7
+      slotTimeForDB,              // 8 - SINGLE JSON STRING value
+      start_time,                 // 9
+      end_time,                   // 10
+      appointment_fee,            // 11
+      fee_type || "video_fee",    // 12
+      consultation_type,          // 13
+      "follow_up",                // 14
+      "pending",                  // 15
+      "paid",                     // 16
+      razorpay_payment_id,        // 17
+      meetingId,                  // 18
+      token,                      // 19
+      reason || "",               // 20
+      symptoms || "",             // 21
+      medications || "",          // 22
     ];
 
-    await db.query(insertQuery, values);
+    // Debug logging
+    console.log("🔢 Column count:", (insertQuery.match(/\?/g) || []).length);
+    console.log("🔢 Value count:", values.length);
+    console.log("📋 Values being inserted:", values);
 
-    console.log("✅ Multi-slot appointment created:", appointmentId);
+    // Execute insert
+    const [result] = await db.query(insertQuery, values);
+
+    console.log("✅ Appointment created successfully:", appointmentId);
+
+    // Parse back to array for response
+    let slotsArray;
+    try {
+      slotsArray = JSON.parse(slotTimeForDB);
+    } catch (e) {
+      slotsArray = [slotTimeForDB];
+    }
 
     res.json({
       success: true,
@@ -122,7 +187,8 @@ export const verifyPayment = async (req, res) => {
       data: {
         appointment_id: appointmentId,
         appointment_date,
-        appointment_slot_time: slotsArray,  // Return as array
+        appointment_slot_time: slotsArray,  // Return as array to frontend
+        slot_count: Array.isArray(slotsArray) ? slotsArray.length : 1,
         start_time,
         end_time,
         transaction_id: razorpay_payment_id,
@@ -132,6 +198,11 @@ export const verifyPayment = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ verifyPayment error:", error);
+    console.error("❌ Error details:", {
+      message: error.message,
+      code: error.code,
+      sql: error.sql,
+    });
     res.status(400).json({
       success: false,
       message: "Failed to verify/save appointment",
@@ -142,101 +213,12 @@ export const verifyPayment = async (req, res) => {
 
 
 // ============================================
-// DISPLAYING MULTI-SLOT APPOINTMENTS
+// HELPER: Display slots in frontend
 // ============================================
-// controllers/appointmentController.js - UPDATE to parse slots
-
-export const getAllMyAppointments = async (req, res) => {
-  try {
-    const patientId = getUserId(req);
-
-    if (!patientId) return res.json({ success: true, data: [] });
-
-    const [rows] = await db.query(
-      `SELECT * FROM appointments
-       WHERE patient_id = ?
-       ORDER BY appointment_date DESC`,
-      [patientId]
-    );
-
-    // ✅ Parse JSON slots for each appointment
-    const appointments = rows.map(apt => {
-      try {
-        if (apt.appointment_slot_time && typeof apt.appointment_slot_time === 'string') {
-          apt.appointment_slot_time = JSON.parse(apt.appointment_slot_time);
-        }
-      } catch (e) {
-        console.warn("Failed to parse slots:", e);
-      }
-      return apt;
-    });
-
-    return res.json({ success: true, data: appointments });
-  } catch (err) {
-    console.error("getAllMyAppointments error:", err);
-    return res.status(500).json({ success: false });
-  }
-};
-
-// Same for other appointment functions
-export const getUpcomingAppointments = async (req, res) => {
-  try {
-    const patientId = getUserId(req);
-    if (!patientId) return res.json({ success: true, appointments: [] });
-
-    const [rows] = await db.query(
-      `SELECT * FROM appointments
-       WHERE patient_id = ?
-       AND appointment_date >= CURDATE()
-       ORDER BY appointment_date ASC`,
-      [patientId]
-    );
-
-    // ✅ Parse JSON slots
-    const appointments = rows.map(apt => {
-      try {
-        if (apt.appointment_slot_time && typeof apt.appointment_slot_time === 'string') {
-          apt.appointment_slot_time = JSON.parse(apt.appointment_slot_time);
-        }
-      } catch (e) {
-        console.warn("Failed to parse slots:", e);
-      }
-      return apt;
-    });
-
-    return res.json({ success: true, appointments });
-  } catch (err) {
-    console.error("getUpcomingAppointments error:", err);
-    return res.status(500).json({ success: false });
-  }
-};
-
-
-// ============================================
-// DATABASE SCHEMA CHECK
-// ============================================
-/*
-Make sure your appointments table has appointment_slot_time as TEXT or JSON:
-
-ALTER TABLE appointments 
-MODIFY COLUMN appointment_slot_time TEXT;
-
-OR if your MySQL version supports JSON type:
-
-ALTER TABLE appointments 
-MODIFY COLUMN appointment_slot_time JSON;
-*/
-
-
-// ============================================
-// FRONTEND DISPLAY HELPER
-// ============================================
-// Utils to display slots nicely in your React Native app
-
-export const displaySlots = (slots) => {
+export const formatSlotDisplay = (slots) => {
   if (!slots) return "";
   
-  // If it's a string, try to parse it
+  // Parse if string
   if (typeof slots === 'string') {
     try {
       slots = JSON.parse(slots);
@@ -245,20 +227,16 @@ export const displaySlots = (slots) => {
     }
   }
   
-  // If it's an array, join with commas
+  // Handle array
   if (Array.isArray(slots)) {
-    if (slots.length === 1) {
-      return slots[0];
-    }
-    if (slots.length === 2) {
-      return `${slots[0]} - ${slots[slots.length - 1]}`;
-    }
-    return `${slots[0]} - ${slots[slots.length - 1]} (${slots.length} slots)`;
+    if (slots.length === 0) return "";
+    if (slots.length === 1) return slots[0];
+    
+    // Show range for multiple slots
+    const first = slots[0];
+    const last = slots[slots.length - 1];
+    return `${first} - ${last} (${slots.length} slots)`;
   }
   
   return slots;
 };
-
-// Example usage in React Native:
-// <Text>{displaySlots(appointment.appointment_slot_time)}</Text>
-// Output: "10:00 AM - 11:00 AM (4 slots)"
