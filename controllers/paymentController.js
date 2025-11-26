@@ -1,5 +1,5 @@
 // controllers/paymentController.js
-// ✅ COMPLETE REPLACEMENT - Copy this entire file
+// ✅ FIXED VERSION - Column count mismatch resolved
 
 import Razorpay from "razorpay";
 import crypto from "crypto";
@@ -66,7 +66,6 @@ export const verifyPayment = async (req, res) => {
 
     console.log("📥 RECEIVED appointment_slot_time:", appointment_slot_time);
     console.log("📥 Type:", typeof appointment_slot_time);
-    console.log("📥 Is Array:", Array.isArray(appointment_slot_time));
 
     // Verify Razorpay signature
     const generatedSignature = crypto
@@ -81,23 +80,29 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
-    // ✅ CRITICAL: Convert array to JSON STRING (single value)
+    // ✅ CRITICAL FIX: Ensure appointment_slot_time is stored as a JSON string
     let slotTimeForDB;
+    
     if (Array.isArray(appointment_slot_time)) {
+      // If it's already an array, stringify it
       slotTimeForDB = JSON.stringify(appointment_slot_time);
     } else if (typeof appointment_slot_time === 'string') {
+      // If it's a string, check if it's already JSON
       try {
-        JSON.parse(appointment_slot_time);
+        const parsed = JSON.parse(appointment_slot_time);
+        // If parseable, use as-is
         slotTimeForDB = appointment_slot_time;
       } catch (e) {
+        // If not JSON, wrap in array and stringify
         slotTimeForDB = JSON.stringify([appointment_slot_time]);
       }
     } else {
-      slotTimeForDB = JSON.stringify([appointment_slot_time]);
+      // Fallback: convert to string array
+      slotTimeForDB = JSON.stringify([String(appointment_slot_time)]);
     }
 
-    console.log("💾 CONVERTED to JSON string:", slotTimeForDB);
-    console.log("💾 This is a SINGLE string value, not an array");
+    console.log("💾 STORING as JSON string:", slotTimeForDB);
+    console.log("💾 Length:", slotTimeForDB.length, "chars");
 
     // Generate appointment ID
     const appointmentId = `APPT-${String(Math.floor(10000 + Math.random() * 90000)).padStart(5, "0")}`;
@@ -106,7 +111,7 @@ export const verifyPayment = async (req, res) => {
     const meetingId = crypto.randomUUID();
     const token = crypto.randomUUID();
 
-    // ✅ 22 columns (based on your error message)
+    // ✅ SQL with 22 columns (matching your schema)
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -134,7 +139,7 @@ export const verifyPayment = async (req, res) => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    // ✅ CRITICAL: 22 values in an ARRAY - DO NOT SPREAD appointment_slot_time
+    // ✅ CRITICAL: 22 values - appointment_slot_time is ONE value (JSON string)
     const values = [
       appointmentId,              // 1
       patient_id,                 // 2
@@ -143,7 +148,7 @@ export const verifyPayment = async (req, res) => {
       doctor_id,                  // 5
       clinic_id || null,          // 6
       appointment_date,           // 7
-      slotTimeForDB,              // 8 ✅ SINGLE string value: '["10:00 AM","11:00 AM"]'
+      slotTimeForDB,              // 8  ✅ SINGLE JSON STRING: '["10:00 AM","11:00 AM"]'
       start_time,                 // 9
       end_time,                   // 10
       appointment_fee,            // 11
@@ -160,13 +165,12 @@ export const verifyPayment = async (req, res) => {
       medications || "",          // 22
     ];
 
-    console.log("🔢 COLUMN COUNT:", (insertQuery.match(/\?/g) || []).length);
-    console.log("🔢 VALUE COUNT:", values.length);
-    console.log("📋 VALUE AT INDEX 7 (appointment_slot_time):", values[7]);
-    console.log("📋 TYPE OF INDEX 7:", typeof values[7]);
-
-    // ✅ Verify counts match before executing
+    // Verify counts match
     const columnCount = (insertQuery.match(/\?/g) || []).length;
+    console.log("📢 COLUMN COUNT:", columnCount);
+    console.log("📢 VALUE COUNT:", values.length);
+    console.log("📋 VALUE[7] (appointment_slot_time):", values[7]);
+    
     if (columnCount !== values.length) {
       throw new Error(`Column/Value mismatch: ${columnCount} columns vs ${values.length} values`);
     }
