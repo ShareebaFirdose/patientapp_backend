@@ -1,212 +1,12 @@
-import Razorpay from "razorpay";
-import crypto from "crypto";
-import { v4 as uuidv4 } from "uuid";
-import nodemailer from "nodemailer";
-import axios from "axios";
-import db from "../config/db.js";
-import dotenv from "dotenv";
-dotenv.config();
+// Enhanced version with detailed logging for APK debugging
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.gmail.com",
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
-
-/* ============================================================
-   📱 SEND WHATSAPP NOTIFICATION
-============================================================ */
-const sendWhatsAppNotification = async (phone, type, data) => {
-  try {
-    const WHATSAPP_API_URL =
-      process.env.WHATSAPP_API_URL || "YOUR_WHATSAPP_API_ENDPOINT";
-    const WHATSAPP_API_KEY =
-      process.env.WHATSAPP_API_KEY || "YOUR_API_KEY";
-
-    let message = "";
-
-    if (type === "appointment_patient") {
-      message = `✅ *Appointment Confirmed*\n\nHi ${
-        data.patientName
-      },\n\n*Appointment Details:*\n━━━━━━━━━━━━━━━━\n📋 ID: ${
-        data.appointment_id
-      }\n👨‍⚕️ Doctor: Dr. ${
-        data.doctor_name
-      }\n📅 Date: ${
-        data.appointment_date
-      }\n🕐 Time: ${
-        data.appointment_slot_time
-      }\n💊 Type: ${
-        data.consultation_type
-      }\n💰 Fee: ₹${
-        data.appointment_fee
-      }\n💳 Transaction: ${
-        data.transaction_id
-      }\n\nThank you for choosing PRED CARE!\n\n- PRED CARE Team`;
-    } else if (type === "appointment_doctor") {
-      message = `🔔 *New Appointment Booked*\n\nDr. ${
-        data.doctor_name
-      },\n\n*Patient Details:*\n━━━━━━━━━━━━━━━━\n👤 Name: ${
-        data.patientName
-      }\n📧 Email: ${
-        data.patientEmail
-      }\n📱 Phone: ${
-        data.patientPhone
-      }\n\n*Appointment:*\n📅 ${
-        data.appointment_date
-      }\n🕐 ${
-        data.appointment_slot_time
-      }\n💊 ${
-        data.consultation_type
-      }\n📋 ID: ${
-        data.appointment_id
-      }\n${
-        data.reason
-          ? `\n📝 Reason: ${data.reason}`
-          : ""
-      }\n\n- PRED CARE`;
-    }
-
-    await axios.post(
-      WHATSAPP_API_URL,
-      { phone, message },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${WHATSAPP_API_KEY}`,
-        },
-      }
-    );
-
-    console.log("✅ WhatsApp sent to:", phone);
-    return true;
-  } catch (error) {
-    console.log("❌ WhatsApp Error:", error.message);
-    return false;
-  }
-};
-
-// ---------------- DATE FORMAT ----------------
-const formatDateForEmail = (dateStr) => {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-};
-
-// ---------------- EMAIL TEMPLATES ----------------
-const buildDoctorEmailHtml = ({
-  doctorName,
-  patientName,
-  patientEmail,
-  patientPhone,
-  clinicName,
-  date,
-  time,
-  type,
-  appointment_id,
-  reason,
-}) => {
-  return `
-  <div style="font-family:Arial; color:#fff; background:#121212; padding:24px;">
-    <h1 style="color:#fff;">PRED CARE</h1>
-    <p>Hi Dr. ${doctorName},</p>
-    <p>A new appointment has been booked.</p>
-
-    <h3 style="color:#9bd1ff;">Patient Information:</h3>
-    <ul>
-      <li><strong>Name:</strong> ${patientName}</li>
-      <li><strong>Email:</strong> ${patientEmail}</li>
-      <li><strong>Phone:</strong> ${patientPhone}</li>
-    </ul>
-
-    <h3 style="color:#9bd1ff;">Appointment Details:</h3>
-    <ul>
-      <li><strong>Clinic:</strong> ${clinicName}</li>
-      <li><strong>Date:</strong> ${formatDateForEmail(date)}</li>
-      <li><strong>Time:</strong> ${time}</li>
-      <li><strong>Type:</strong> ${type}</li>
-      <li><strong>Appointment ID:</strong> ${appointment_id}</li>
-      <li><strong>Reason:</strong> ${reason || "N/A"}</li>
-    </ul>
-  </div>`;
-};
-
-const buildPatientEmailHtml = ({
-  patientName,
-  doctorName,
-  specialization,
-  clinicName,
-  date,
-  time,
-  type,
-  fee,
-  appointment_id,
-  transaction_id,
-}) => {
-  return `
-  <div style="font-family:Arial; color:#000; padding:24px;">
-    <h1>PRED CARE</h1>
-    <p>Hi ${patientName}, your appointment is confirmed.</p>
-
-    <ul>
-      <li><strong>Doctor:</strong> Dr. ${doctorName} ${
-    specialization ? `(${specialization})` : ""
-  }</li>
-      <li><strong>Clinic:</strong> ${clinicName}</li>
-      <li><strong>Date:</strong> ${formatDateForEmail(date)}</li>
-      <li><strong>Time:</strong> ${time}</li>
-      <li><strong>Type:</strong> ${type}</li>
-      <li><strong>Fee Paid:</strong> ₹${fee}</li>
-      <li><strong>Payment ID:</strong> ${transaction_id}</li>
-      <li><strong>Appointment ID:</strong> ${appointment_id}</li>
-    </ul>
-  </div>`;
-};
-
-// ---------------- CREATE ORDER ----------------
-export const createOrder = async (req, res) => {
-  try {
-    const { amount, currency } = req.body;
-
-    if (!amount)
-      return res
-        .status(400)
-        .json({ success: false, message: "amount required" });
-
-    const order = await razorpay.orders.create({
-      amount: Number(amount),
-      currency: currency || "INR",
-      receipt: uuidv4(),
-    });
-
-    return res.json({
-      success: true,
-      orderId: order.id,
-      amount: order.amount,
-      key: process.env.RAZORPAY_KEY_ID,
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// ---------------- VERIFY PAYMENT + SAVE APPOINTMENT ----------------
 export const verifyPayment = async (req, res) => {
   try {
     const payload = req.body;
+
+    console.log('=================================');
+    console.log('📥 RECEIVED PAYLOAD:', JSON.stringify(payload, null, 2));
+    console.log('=================================');
 
     const required = [
       "razorpay_order_id",
@@ -223,14 +23,24 @@ export const verifyPayment = async (req, res) => {
       "end_time",
     ];
 
+    // Check for missing fields
+    const missingFields = [];
     for (const field of required) {
       if (!payload[field]) {
-        return res.status(400).json({
-          success: false,
-          message: `${field} is missing`,
-        });
+        missingFields.push(field);
       }
     }
+
+    if (missingFields.length > 0) {
+      console.error('❌ MISSING FIELDS:', missingFields);
+      return res.status(400).json({
+        success: false,
+        message: `Missing required fields: ${missingFields.join(', ')}`,
+        missingFields
+      });
+    }
+
+    console.log('✅ All required fields present');
 
     // ✅ Verify signature
     const generated_signature = crypto
@@ -239,16 +49,24 @@ export const verifyPayment = async (req, res) => {
       .digest("hex");
 
     if (generated_signature !== payload.razorpay_signature) {
+      console.error('❌ SIGNATURE MISMATCH');
+      console.error('Generated:', generated_signature);
+      console.error('Received:', payload.razorpay_signature);
+      
       return res.status(400).json({
         success: false,
         message: "Invalid signature",
       });
     }
 
+    console.log('✅ Signature verified');
+
     // ✅ Convert multi slots to string
     const slotString = Array.isArray(payload.appointment_slot_time)
       ? payload.appointment_slot_time.join(", ")
-      : payload.appointment_slot_time;
+      : String(payload.appointment_slot_time);
+
+    console.log('📅 Slot String:', slotString);
 
     // ✅ Get clinic ID
     const [availRows] = await db.query(
@@ -258,6 +76,7 @@ export const verifyPayment = async (req, res) => {
     );
 
     const clinic_id = availRows?.[0]?.clinic_id || payload.clinic_id || null;
+    console.log('🏥 Clinic ID:', clinic_id);
 
     // ✅ First or follow-up visit
     const [prev] = await db.query(
@@ -267,6 +86,7 @@ export const verifyPayment = async (req, res) => {
     );
 
     const appointment_type = prev.length ? "follow_up" : "first_visit";
+    console.log('📋 Appointment Type:', appointment_type);
 
     // ✅ New appointment id
     const [maxRow] = await db.query(
@@ -275,11 +95,12 @@ export const verifyPayment = async (req, res) => {
 
     const nextSeq = maxRow[0].maxId + 1;
     const appointment_id = `APPT-${String(nextSeq).padStart(5, "0")}`;
+    console.log('🆔 Appointment ID:', appointment_id);
 
     const meeting_id = uuidv4();
     const token = uuidv4();
 
-    // ✅ FIXED INSERT - Correct column count
+    // ✅ FIXED INSERT
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -315,9 +136,9 @@ export const verifyPayment = async (req, res) => {
       payload.doctor_id,                 // 5
       clinic_id,                         // 6
       payload.appointment_date,          // 7
-      slotString,                        // 8 - appointment_slot_time
-      payload.start_time,                // 9 - start_time
-      payload.end_time,                  // 10 - end_time
+      slotString,                        // 8
+      payload.start_time,                // 9
+      payload.end_time,                  // 10
       payload.appointment_fee,           // 11
       payload.fee_type || "",            // 12
       payload.consultation_type || "",   // 13
@@ -332,10 +153,16 @@ export const verifyPayment = async (req, res) => {
       payload.medications || "",         // 22
     ];
 
-    console.log('🔍 INSERT VALUES COUNT:', insertValues.length);
-    console.log('🔍 INSERT QUERY PLACEHOLDERS:', (insertQuery.match(/\?/g) || []).length);
+    console.log('💾 Insert Values Count:', insertValues.length);
+    console.log('💾 Insert Values:', JSON.stringify(insertValues, null, 2));
 
-    await db.query(insertQuery, insertValues);
+    try {
+      await db.query(insertQuery, insertValues);
+      console.log('✅ Database insert successful');
+    } catch (dbError) {
+      console.error('❌ DATABASE INSERT ERROR:', dbError);
+      throw dbError;
+    }
 
     // ✅ GET DOCTOR INFO
     const [doc] = await db.query(
@@ -347,76 +174,100 @@ export const verifyPayment = async (req, res) => {
     const doctorEmail = doc?.[0]?.email;
     const doctorPhone = doc?.[0]?.phone_number;
 
-    // ✅ SEND EMAIL TO DOCTOR
-    const doctorHtml = buildDoctorEmailHtml({
-      doctorName,
-      patientName: payload.patient_name,
-      patientEmail: payload.patient_email,
-      patientPhone: payload.patient_phone || "N/A",
-      clinicName: "Clinic",
-      date: payload.appointment_date,
-      time: slotString,
-      type: payload.consultation_type,
-      appointment_id,
-      reason: payload.reason,
-    });
+    console.log('👨‍⚕️ Doctor Info:', { doctorName, doctorEmail, doctorPhone });
 
+    // ✅ SEND EMAIL TO DOCTOR (with error handling)
     if (doctorEmail) {
-      transporter.sendMail({
-        from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-        to: doctorEmail,
-        subject: `New Appointment - ${appointment_id}`,
-        html: doctorHtml,
-      });
+      try {
+        const doctorHtml = buildDoctorEmailHtml({
+          doctorName,
+          patientName: payload.patient_name,
+          patientEmail: payload.patient_email,
+          patientPhone: payload.patient_phone || "N/A",
+          clinicName: "Clinic",
+          date: payload.appointment_date,
+          time: slotString,
+          type: payload.consultation_type,
+          appointment_id,
+          reason: payload.reason,
+        });
+
+        await transporter.sendMail({
+          from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+          to: doctorEmail,
+          subject: `New Appointment - ${appointment_id}`,
+          html: doctorHtml,
+        });
+        console.log('✅ Doctor email sent');
+      } catch (emailError) {
+        console.error('⚠️ Doctor email failed (non-critical):', emailError.message);
+      }
     }
 
+    // ✅ WhatsApp to doctor
     if (doctorPhone) {
-      sendWhatsAppNotification(doctorPhone, "appointment_doctor", {
-        doctor_name: doctorName,
-        patientName: payload.patient_name,
-        patientEmail: payload.patient_email,
-        patientPhone: payload.patient_phone || "N/A",
-        appointment_date: formatDateForEmail(payload.appointment_date),
-        appointment_slot_time: slotString,
-        consultation_type: payload.consultation_type,
-        appointment_id,
-        reason: payload.reason,
-      });
+      try {
+        await sendWhatsAppNotification(doctorPhone, "appointment_doctor", {
+          doctor_name: doctorName,
+          patientName: payload.patient_name,
+          patientEmail: payload.patient_email,
+          patientPhone: payload.patient_phone || "N/A",
+          appointment_date: formatDateForEmail(payload.appointment_date),
+          appointment_slot_time: slotString,
+          consultation_type: payload.consultation_type,
+          appointment_id,
+          reason: payload.reason,
+        });
+      } catch (whatsappError) {
+        console.error('⚠️ Doctor WhatsApp failed (non-critical):', whatsappError.message);
+      }
     }
 
     // ✅ SEND EMAIL TO PATIENT
-    const patientHtml = buildPatientEmailHtml({
-      patientName: payload.patient_name,
-      doctorName,
-      specialization: "",
-      clinicName: "Clinic",
-      date: payload.appointment_date,
-      time: slotString,
-      type: payload.consultation_type,
-      fee: payload.appointment_fee,
-      appointment_id,
-      transaction_id: payload.razorpay_payment_id,
-    });
-
-    transporter.sendMail({
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to: payload.patient_email,
-      subject: `Appointment Confirmed - ${appointment_id}`,
-      html: patientHtml,
-    });
-
-    if (payload.patient_phone) {
-      sendWhatsAppNotification(payload.patient_phone, "appointment_patient", {
+    try {
+      const patientHtml = buildPatientEmailHtml({
         patientName: payload.patient_name,
-        doctor_name: doctorName,
+        doctorName,
+        specialization: "",
+        clinicName: "Clinic",
+        date: payload.appointment_date,
+        time: slotString,
+        type: payload.consultation_type,
+        fee: payload.appointment_fee,
         appointment_id,
-        appointment_date: formatDateForEmail(payload.appointment_date),
-        appointment_slot_time: slotString,
-        consultation_type: payload.consultation_type,
-        appointment_fee: payload.appointment_fee,
         transaction_id: payload.razorpay_payment_id,
       });
+
+      await transporter.sendMail({
+        from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+        to: payload.patient_email,
+        subject: `Appointment Confirmed - ${appointment_id}`,
+        html: patientHtml,
+      });
+      console.log('✅ Patient email sent');
+    } catch (emailError) {
+      console.error('⚠️ Patient email failed (non-critical):', emailError.message);
     }
+
+    // ✅ WhatsApp to patient
+    if (payload.patient_phone) {
+      try {
+        await sendWhatsAppNotification(payload.patient_phone, "appointment_patient", {
+          patientName: payload.patient_name,
+          doctor_name: doctorName,
+          appointment_id,
+          appointment_date: formatDateForEmail(payload.appointment_date),
+          appointment_slot_time: slotString,
+          consultation_type: payload.consultation_type,
+          appointment_fee: payload.appointment_fee,
+          transaction_id: payload.razorpay_payment_id,
+        });
+      } catch (whatsappError) {
+        console.error('⚠️ Patient WhatsApp failed (non-critical):', whatsappError.message);
+      }
+    }
+
+    console.log('✅ Payment verification complete - SUCCESS');
 
     return res.json({
       success: true,
@@ -432,12 +283,21 @@ export const verifyPayment = async (req, res) => {
         transaction_id: payload.razorpay_payment_id,
       },
     });
+
   } catch (err) {
-    console.error("verifyPayment error:", err);
+    console.error('❌❌❌ VERIFY PAYMENT ERROR ❌❌❌');
+    console.error('Error Name:', err.name);
+    console.error('Error Message:', err.message);
+    console.error('Error Stack:', err.stack);
+    console.error('Error Code:', err.code);
+    console.error('SQL:', err.sql);
+    
     return res.status(400).json({
       success: false,
       message: "Failed to verify/save appointment",
       error: err.message,
+      errorCode: err.code,
+      errorDetails: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 };
