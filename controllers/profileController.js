@@ -27,12 +27,21 @@ export const checkProfile = async (req, res) => {
 export const createProfile = async (req, res) => {
   try {
     // 🔥 Access body fields correctly with multipart/form-data
-    console.log("📥 Raw req.body:", req.body);
-    console.log("📁 Raw req.file:", req.file);
+    console.log("🔥 Raw req.body:", req.body);
+    console.log("📎 Raw req.file:", req.file);
 
     let gender = req.body?.gender;
     let date_of_birth = req.body?.date_of_birth;
     let alternate_phone = req.body?.alternate_phone;
+    
+    // ✅ Extract address fields
+    let address = req.body?.address;
+    let street_address = req.body?.street_address;
+    let city = req.body?.city;
+    let state = req.body?.state;
+    let postal_code = req.body?.postal_code;
+    let country = req.body?.country;
+    
     let profile_picture = null;
     
     const userId = req.user.id;
@@ -40,15 +49,21 @@ export const createProfile = async (req, res) => {
     console.log("🔥 Received profile data:", { 
       gender, 
       date_of_birth, 
-      alternate_phone, 
+      alternate_phone,
+      address,
+      street_address,
+      city,
+      state,
+      postal_code,
+      country,
       userId 
     });
 
-    // Validation
-    if (!gender || !date_of_birth) {
+    // ✅ Updated Validation - include address fields
+    if (!gender || !date_of_birth || !address || !street_address || !city || !state || !postal_code || !country) {
       return res.status(400).json({
         success: false,
-        message: "Gender and Date of Birth are required",
+        message: "Gender, Date of Birth, and all address fields are required",
       });
     }
 
@@ -100,10 +115,28 @@ export const createProfile = async (req, res) => {
         console.log("🔄 Updating existing patient profile...");
         
         // Build dynamic update query based on available fields
-        let updateFields = ["gender = ?", "date_of_birth = ?"];
-        let updateValues = [gender, formattedDOB];
+        let updateFields = [
+          "gender = ?", 
+          "date_of_birth = ?",
+          "address = ?",
+          "street_address = ?",
+          "city = ?",
+          "state = ?",
+          "postal_code = ?",
+          "country = ?"
+        ];
+        let updateValues = [
+          gender, 
+          formattedDOB,
+          address,
+          street_address,
+          city,
+          state,
+          postal_code,
+          country
+        ];
         
-        if (alternate_phone !== undefined && alternate_phone !== null) {
+        if (alternate_phone !== undefined && alternate_phone !== null && alternate_phone !== "") {
           updateFields.push("phone = ?");
           updateValues.push(alternate_phone);
         }
@@ -117,6 +150,9 @@ export const createProfile = async (req, res) => {
         
         const updateQuery = `UPDATE patients SET ${updateFields.join(", ")} WHERE user_id = ?`;
         
+        console.log("📝 Update query:", updateQuery);
+        console.log("📝 Update values:", updateValues);
+        
         await db.query(updateQuery, updateValues);
         
       } else {
@@ -124,9 +160,23 @@ export const createProfile = async (req, res) => {
         console.log("➕ Inserting new patient profile...");
         
         await db.query(
-          `INSERT INTO patients (user_id, gender, date_of_birth, phone, profile_image, status)
-           VALUES (?, ?, ?, ?, ?, 'active')`,
-          [userId, gender, formattedDOB, alternate_phone || null, profile_picture || null]
+          `INSERT INTO patients (
+            user_id, gender, date_of_birth, phone, profile_image, 
+            address, street_address, city, state, postal_code, country, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+          [
+            userId, 
+            gender, 
+            formattedDOB, 
+            alternate_phone || null, 
+            profile_picture || null,
+            address,
+            street_address,
+            city,
+            state,
+            postal_code,
+            country
+          ]
         );
       }
 
@@ -141,6 +191,12 @@ export const createProfile = async (req, res) => {
           date_of_birth: formattedDOB,
           alternate_phone: alternate_phone || null,
           profile_picture: profile_picture || null,
+          address,
+          street_address,
+          city,
+          state,
+          postal_code,
+          country
         },
       });
 
@@ -179,6 +235,7 @@ export const getProfile = async (req, res) => {
         patients.phone as alternate_phone,
         patients.profile_image as profile_picture,
         patients.address,
+        patients.street_address,
         patients.city,
         patients.state,
         patients.postal_code,

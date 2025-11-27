@@ -11,9 +11,9 @@ const toMySQLDateTime = (isoString) => {
   if (!isoString) return null;
   try {
     const date = new Date(isoString);
-    return date.toISOString().slice(0, 19).replace('T', ' ');
+    return date.toISOString().slice(0, 19).replace("T", " ");
   } catch (error) {
-    console.error('Date conversion error:', error);
+    console.error("Date conversion error:", error);
     return null;
   }
 };
@@ -113,7 +113,106 @@ export const getAppointmentById = async (req, res) => {
 };
 
 /* -------------------------------------------------------------
-   VIDEO TOKEN (MEETING ID GENERATION)
+   ✅ GET BOOKED SLOTS - EXCLUDE USER'S OWN BOOKINGS
+------------------------------------------------------------- */
+export const getBookedSlots = async (req, res) => {
+  try {
+    const { doctor_id, appointment_date, consultation_type } = req.query;
+
+    if (!doctor_id || !appointment_date || !consultation_type) {
+      return res.status(400).json({
+        success: false,
+        message: "doctor_id, appointment_date and consultation_type are required",
+      });
+    }
+
+    // Get the current user's ID from token (if present)
+    let currentUserId = null;
+    
+    // Try to extract user ID from token if present
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        currentUserId = decoded.id || decoded.userId;
+      } catch (err) {
+        // Token invalid or expired, continue without user ID
+        console.log("Could not decode token:", err.message);
+      }
+    }
+
+    const [rows] = await db.query(
+      `
+      SELECT appointment_slot_time, patient_id, id
+      FROM appointments 
+      WHERE doctor_id = ?
+      AND appointment_date = ?
+      AND consultation_type = ?
+      `,
+      [doctor_id, appointment_date, consultation_type]
+    );
+
+    let bookedSlots = [];
+    let myBookedSlots = [];
+
+    rows.forEach((row) => {
+      if (row.appointment_slot_time) {
+        let slots = [];
+        
+        try {
+          // MULTI SLOT -> JSON array
+          if (row.appointment_slot_time.startsWith("[")) {
+            const parsed = JSON.parse(row.appointment_slot_time);
+            if (Array.isArray(parsed)) {
+              slots = parsed;
+            }
+          } else {
+            // SINGLE SLOT
+            slots = [row.appointment_slot_time];
+          }
+        } catch (err) {
+          // fallback
+          slots = [row.appointment_slot_time];
+        }
+
+        // ✅ Only add to bookedSlots if NOT booked by current user
+        if (currentUserId && row.patient_id === currentUserId) {
+          // This is the current user's booking
+          myBookedSlots.push(...slots);
+        } else {
+          // This is someone else's booking
+          bookedSlots.push(...slots);
+        }
+      }
+    });
+
+    // Remove duplicates
+    bookedSlots = [...new Set(bookedSlots)];
+    myBookedSlots = [...new Set(myBookedSlots)];
+
+    console.log("Current User ID:", currentUserId);
+    console.log("Booked by others:", bookedSlots);
+    console.log("My booked slots:", myBookedSlots);
+
+    return res.status(200).json({
+      success: true,
+      bookedSlots,      // Slots booked by OTHER users (not current user)
+      myBookedSlots,    // Only slots booked by current user
+    });
+
+  } catch (error) {
+    console.error("❌ getBookedSlots error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch booked slots",
+      error: error.message,
+    });
+  }
+};
+
+/* -------------------------------------------------------------
+   VIDEO TOKEN
 ------------------------------------------------------------- */
 export const getVideoToken = async (req, res) => {
   try {
@@ -152,7 +251,6 @@ export const getVideoToken = async (req, res) => {
       });
     }
 
-    // Create new meeting if none
     if (!meetingId) {
       const adminToken = jwt.sign(
         {
@@ -213,7 +311,7 @@ export const getVideoToken = async (req, res) => {
 };
 
 /* -------------------------------------------------------------
-   ✅ SAVE CALL DETAILS (FIXED DATE FORMAT)
+   ✅ SAVE CALL DETAILS
 ------------------------------------------------------------- */
 export const saveCallDetails = async (req, res) => {
   try {
@@ -226,15 +324,6 @@ export const saveCallDetails = async (req, res) => {
       participants,
     } = req.body;
 
-    console.log('📝 Received call details:', {
-      appointmentId,
-      duration,
-      startTime,
-      endTime,
-      reason,
-      participants
-    });
-
     if (!appointmentId) {
       return res.status(400).json({
         success: false,
@@ -242,14 +331,8 @@ export const saveCallDetails = async (req, res) => {
       });
     }
 
-    // Convert ISO timestamps to MySQL datetime format
     const mysqlStartTime = toMySQLDateTime(startTime);
     const mysqlEndTime = toMySQLDateTime(endTime);
-
-    console.log('🔄 Converted timestamps:', {
-      original: { startTime, endTime },
-      converted: { mysqlStartTime, mysqlEndTime }
-    });
 
     await db.query(
       `UPDATE appointments 
@@ -269,8 +352,6 @@ export const saveCallDetails = async (req, res) => {
         appointmentId,
       ]
     );
-
-    console.log('✅ Call details saved successfully for appointment:', appointmentId);
 
     return res.json({
       success: true,

@@ -6,6 +6,7 @@ import {
   getAllMyAppointments,
   getVideoToken,
   saveCallDetails,
+  getBookedSlots,
 } from "../controllers/appointmentController.js";
 
 import { authenticateJWT } from "../middleware/authMiddleware.js";
@@ -19,6 +20,9 @@ router.get("/my-appointments", authenticateJWT, getAllMyAppointments);
 /* Upcoming & Past */
 router.get("/upcoming", authenticateJWT, getUpcomingAppointments);
 router.get("/past", authenticateJWT, getPastAppointments);
+
+/* ✅ Get booked slots (NO AUTH needed) */
+router.get("/booked-slots", getBookedSlots);
 
 /* ✅ Save call details */
 router.post("/save-call-details", authenticateJWT, saveCallDetails);
