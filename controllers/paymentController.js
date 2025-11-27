@@ -23,21 +23,35 @@ const transporter = nodemailer.createTransport({
 });
 
 /* ============================================================
-   📱 SEND WHATSAPP NOTIFICATION
+   📱 SEND WHATSAPP NOTIFICATION - FIXED VERSION
 ============================================================ */
 const sendWhatsAppNotification = async (phone, type, data) => {
   try {
-    const WHATSAPP_API_URL =
-      process.env.WHATSAPP_API_URL || "YOUR_WHATSAPP_API_ENDPOINT";
-    const WHATSAPP_API_KEY =
-      process.env.WHATSAPP_API_KEY || "YOUR_API_KEY";
+    const WHATSAPP_API_URL = process.env.WHATSAPP_API_URL;
+    const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY;
+    const WHATSAPP_SENDER = process.env.WHATSAPP_SENDER;
+
+    // Skip if WhatsApp is not configured
+    if (!WHATSAPP_API_URL || !WHATSAPP_API_KEY || !WHATSAPP_SENDER) {
+      console.log("⚠️  WhatsApp not configured - skipping notification");
+      return false;
+    }
+
+    // ✅ Format phone number correctly (add 91 prefix if not present)
+    let formattedPhone = phone.toString().replace(/\D/g, ''); // Remove non-digits
+    
+    if (!formattedPhone.startsWith('91') && formattedPhone.length === 10) {
+      formattedPhone = '91' + formattedPhone;
+    }
+
+    console.log(`📱 Preparing WhatsApp for: ${formattedPhone} (Type: ${type})`);
 
     let message = "";
 
     if (type === "appointment_patient") {
       message = `✅ *Appointment Confirmed*\n\nHi ${
         data.patientName
-      },\n\n*Appointment Details:*\n━━━━━━━━━━━━━━━━\n📋 ID: ${
+      },\n\n*Appointment Details:*\n━━━━━━━━━━━━━━━━━\n📋 ID: ${
         data.appointment_id
       }\n👨‍⚕️ Doctor: Dr. ${
         data.doctor_name
@@ -55,7 +69,7 @@ const sendWhatsAppNotification = async (phone, type, data) => {
     } else if (type === "appointment_doctor") {
       message = `🔔 *New Appointment Booked*\n\nDr. ${
         data.doctor_name
-      },\n\n*Patient Details:*\n━━━━━━━━━━━━━━━━\n👤 Name: ${
+      },\n\n*Patient Details:*\n━━━━━━━━━━━━━━━━━\n👤 Name: ${
         data.patientName
       }\n📧 Email: ${
         data.patientEmail
@@ -76,21 +90,47 @@ const sendWhatsAppNotification = async (phone, type, data) => {
       }\n\n- PRED CARE`;
     }
 
-    await axios.post(
+    // ✅ Pinbot API payload structure
+    const payload = {
+      phone: formattedPhone,
+      message: message,
+      sender: WHATSAPP_SENDER,
+    };
+
+    console.log("📤 WhatsApp Payload:", JSON.stringify(payload, null, 2));
+
+    const response = await axios.post(
       WHATSAPP_API_URL,
-      { phone, message },
+      payload,
       {
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${WHATSAPP_API_KEY}`,
+          "Authorization": `Bearer ${WHATSAPP_API_KEY}`,
         },
+        timeout: 10000 // 10 second timeout
       }
     );
 
-    console.log("✅ WhatsApp sent to:", phone);
+    console.log("📨 WhatsApp API Response:", JSON.stringify(response.data, null, 2));
+    console.log("✅ WhatsApp sent successfully to:", formattedPhone);
     return true;
+
   } catch (error) {
-    console.log("❌ WhatsApp Error:", error.message);
+    console.error("❌ WhatsApp Error Details:");
+    console.error("- Type:", type);
+    console.error("- Message:", error.message);
+    
+    if (error.response) {
+      console.error("- Status Code:", error.response.status);
+      console.error("- Response Data:", JSON.stringify(error.response.data, null, 2));
+    } else if (error.request) {
+      console.error("- No response received from server");
+    }
+    
+    if (error.code === 'ECONNABORTED') {
+      console.error("- Request timed out after 10 seconds");
+    }
+    
     return false;
   }
 };
@@ -279,7 +319,7 @@ export const verifyPayment = async (req, res) => {
     const meeting_id = uuidv4();
     const token = uuidv4();
 
-    // ✅ FINAL INSERT (FIXED)
+    // ✅ FINAL INSERT
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -334,6 +374,8 @@ export const verifyPayment = async (req, res) => {
 
     await db.query(insertQuery, insertValues);
 
+    console.log("✅ Appointment saved with ID:", appointment_id);
+
     // ✅ GET DOCTOR INFO
     const [doc] = await db.query(
       `SELECT name, email, phone_number FROM users WHERE id = ?`,
@@ -343,6 +385,8 @@ export const verifyPayment = async (req, res) => {
     const doctorName = doc?.[0]?.name || "Doctor";
     const doctorEmail = doc?.[0]?.email;
     const doctorPhone = doc?.[0]?.phone_number;
+
+    console.log("📧 Sending notifications...");
 
     // ✅ SEND EMAIL TO DOCTOR
     const doctorHtml = buildDoctorEmailHtml({
@@ -364,10 +408,16 @@ export const verifyPayment = async (req, res) => {
         to: doctorEmail,
         subject: `New Appointment - ${appointment_id}`,
         html: doctorHtml,
+      }).then(() => {
+        console.log("✅ Doctor email sent to:", doctorEmail);
+      }).catch(err => {
+        console.error("❌ Doctor email failed:", err.message);
       });
     }
 
+    // ✅ SEND WHATSAPP TO DOCTOR
     if (doctorPhone) {
+      console.log("📱 Attempting WhatsApp to doctor:", doctorPhone);
       sendWhatsAppNotification(doctorPhone, "appointment_doctor", {
         doctor_name: doctorName,
         patientName: payload.patient_name,
@@ -378,6 +428,8 @@ export const verifyPayment = async (req, res) => {
         consultation_type: payload.consultation_type,
         appointment_id,
         reason: payload.reason,
+      }).catch(err => {
+        console.error("❌ Doctor WhatsApp failed:", err.message);
       });
     }
 
@@ -400,9 +452,15 @@ export const verifyPayment = async (req, res) => {
       to: payload.patient_email,
       subject: `Appointment Confirmed - ${appointment_id}`,
       html: patientHtml,
+    }).then(() => {
+      console.log("✅ Patient email sent to:", payload.patient_email);
+    }).catch(err => {
+      console.error("❌ Patient email failed:", err.message);
     });
 
+    // ✅ SEND WHATSAPP TO PATIENT
     if (payload.patient_phone) {
+      console.log("📱 Attempting WhatsApp to patient:", payload.patient_phone);
       sendWhatsAppNotification(payload.patient_phone, "appointment_patient", {
         patientName: payload.patient_name,
         doctor_name: doctorName,
@@ -412,6 +470,8 @@ export const verifyPayment = async (req, res) => {
         consultation_type: payload.consultation_type,
         appointment_fee: payload.appointment_fee,
         transaction_id: payload.razorpay_payment_id,
+      }).catch(err => {
+        console.error("❌ Patient WhatsApp failed:", err.message);
       });
     }
 
@@ -430,7 +490,7 @@ export const verifyPayment = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("verifyPayment error:", err);
+    console.error("❌ verifyPayment error:", err);
     return res.status(400).json({
       success: false,
       message: "Failed to verify/save appointment",

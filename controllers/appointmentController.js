@@ -1,7 +1,11 @@
 import db from "../config/db.js";
 import jwt from "jsonwebtoken";
 
-// Extract correct user ID from token
+/* -------------------------------------------------------------
+   HELPER FUNCTIONS
+------------------------------------------------------------- */
+
+// Extract correct user ID from token (set by authenticateJWT middleware)
 const getUserId = (req) => {
   return req.user?.id || req.user?.userId || null;
 };
@@ -19,7 +23,7 @@ const toMySQLDateTime = (isoString) => {
 };
 
 /* -------------------------------------------------------------
-   UPCOMING
+   UPCOMING APPOINTMENTS
 ------------------------------------------------------------- */
 export const getUpcomingAppointments = async (req, res) => {
   try {
@@ -43,7 +47,7 @@ export const getUpcomingAppointments = async (req, res) => {
 };
 
 /* -------------------------------------------------------------
-   PAST
+   PAST APPOINTMENTS
 ------------------------------------------------------------- */
 export const getPastAppointments = async (req, res) => {
   try {
@@ -113,7 +117,7 @@ export const getAppointmentById = async (req, res) => {
 };
 
 /* -------------------------------------------------------------
-   ✅ GET BOOKED SLOTS - EXCLUDE USER'S OWN BOOKINGS
+   ✅ GET BOOKED SLOTS (FULLY FIXED FOR YOUR DB FORMAT)
 ------------------------------------------------------------- */
 export const getBookedSlots = async (req, res) => {
   try {
@@ -122,35 +126,46 @@ export const getBookedSlots = async (req, res) => {
     if (!doctor_id || !appointment_date || !consultation_type) {
       return res.status(400).json({
         success: false,
-        message: "doctor_id, appointment_date and consultation_type are required",
+        message:
+          "doctor_id, appointment_date and consultation_type are required",
       });
     }
 
-    // Get the current user's ID from token (if present)
-    let currentUserId = null;
-    
-    // Try to extract user ID from token if present
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const token = authHeader.substring(7);
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        currentUserId = decoded.id || decoded.userId;
-      } catch (err) {
-        // Token invalid or expired, continue without user ID
-        console.log("Could not decode token:", err.message);
-      }
+    const currentUserId = getUserId(req);
+    console.log("✅ Logged user:", currentUserId);
+
+    const type = String(consultation_type).toLowerCase();
+    const types = [type];
+
+    if (type === "video") types.push("video_call");
+    if (type === "video_call") types.push("video");
+    if (type === "in-person" || type === "in_person") {
+      types.push("in_person", "in-person");
     }
+
+    const normalizeTime = (t) => {
+      if (!t) return "";
+      let s = String(t).trim();
+      s = s.replace(/\s?(AM|PM)$/i, "").trim();
+
+      const parts = s.split(":");
+      if (parts.length >= 2) {
+        const hh = parts[0].padStart(2, "0");
+        const mm = parts[1].padStart(2, "0");
+        return `${hh}:${mm}`;
+      }
+      return s;
+    };
 
     const [rows] = await db.query(
       `
-      SELECT appointment_slot_time, patient_id, id
+      SELECT appointment_slot_time, patient_id
       FROM appointments 
       WHERE doctor_id = ?
       AND appointment_date = ?
-      AND consultation_type = ?
+      AND LOWER(consultation_type) IN (?)
       `,
-      [doctor_id, appointment_date, consultation_type]
+      [doctor_id, appointment_date, types]
     );
 
     let bookedSlots = [];
@@ -159,48 +174,55 @@ export const getBookedSlots = async (req, res) => {
     rows.forEach((row) => {
       if (row.appointment_slot_time) {
         let slots = [];
-        
+
         try {
-          // MULTI SLOT -> JSON array
-          if (row.appointment_slot_time.startsWith("[")) {
-            const parsed = JSON.parse(row.appointment_slot_time);
-            if (Array.isArray(parsed)) {
-              slots = parsed;
+          if (typeof row.appointment_slot_time === "string") {
+
+            // Case 1: JSON Array
+            if (row.appointment_slot_time.trim().startsWith("[")) {
+              const parsed = JSON.parse(row.appointment_slot_time);
+              if (Array.isArray(parsed)) slots = parsed;
             }
-          } else {
-            // SINGLE SLOT
-            slots = [row.appointment_slot_time];
+
+            // ✅ Case 2: "10:30 AM, 11:30 AM"
+            else if (row.appointment_slot_time.includes(",")) {
+              slots = row.appointment_slot_time
+                .split(",")
+                .map((s) => s.trim());
+            }
+
+            // Case 3: "11:30 AM"
+            else {
+              slots = [row.appointment_slot_time.trim()];
+            }
           }
-        } catch (err) {
-          // fallback
+        } catch {
           slots = [row.appointment_slot_time];
         }
 
-        // ✅ Only add to bookedSlots if NOT booked by current user
-        if (currentUserId && row.patient_id === currentUserId) {
-          // This is the current user's booking
-          myBookedSlots.push(...slots);
+        const normalizedSlots = slots
+          .map(normalizeTime)
+          .filter((v) => v && v !== "");
+
+        if (String(row.patient_id) === String(currentUserId)) {
+          myBookedSlots.push(...normalizedSlots);
         } else {
-          // This is someone else's booking
-          bookedSlots.push(...slots);
+          bookedSlots.push(...normalizedSlots);
         }
       }
     });
 
-    // Remove duplicates
     bookedSlots = [...new Set(bookedSlots)];
     myBookedSlots = [...new Set(myBookedSlots)];
 
-    console.log("Current User ID:", currentUserId);
-    console.log("Booked by others:", bookedSlots);
-    console.log("My booked slots:", myBookedSlots);
+    console.log("✅ Booked by others:", bookedSlots);
+    console.log("✅ My booked slots:", myBookedSlots);
 
     return res.status(200).json({
       success: true,
-      bookedSlots,      // Slots booked by OTHER users (not current user)
-      myBookedSlots,    // Only slots booked by current user
+      bookedSlots,
+      myBookedSlots,
     });
-
   } catch (error) {
     console.error("❌ getBookedSlots error:", error);
     return res.status(500).json({
@@ -300,7 +322,6 @@ export const getVideoToken = async (req, res) => {
       token: userToken,
       meeting_id: meetingId,
     });
-
   } catch (error) {
     console.error("Video token error:", error);
     return res.status(500).json({
@@ -311,7 +332,7 @@ export const getVideoToken = async (req, res) => {
 };
 
 /* -------------------------------------------------------------
-   ✅ SAVE CALL DETAILS
+   SAVE CALL DETAILS
 ------------------------------------------------------------- */
 export const saveCallDetails = async (req, res) => {
   try {
@@ -357,7 +378,6 @@ export const saveCallDetails = async (req, res) => {
       success: true,
       message: "Call details saved",
     });
-
   } catch (error) {
     console.error("saveCallDetails error:", error);
     return res.status(500).json({

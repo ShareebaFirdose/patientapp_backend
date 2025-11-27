@@ -4,7 +4,6 @@ import nodemailer from "nodemailer";
 import axios from "axios";
 import dotenv from "dotenv";
 
-
 dotenv.config();
 
 /* ============================================================
@@ -174,21 +173,28 @@ const sendWelcomeEmail = async (name, email) => {
 };
 
 /* ============================================================
-   📱 SEND WHATSAPP NOTIFICATION
-   You'll need to provide your WhatsApp API credentials
+   📱 SEND WHATSAPP NOTIFICATION - FIXED VERSION
 ============================================================ */
 const sendWhatsAppNotification = async (phone, type, data) => {
   try {
-    // Replace with your actual WhatsApp API endpoint and credentials
-    const WHATSAPP_API_URL = process.env.WHATSAPP_API_URL || "YOUR_WHATSAPP_API_ENDPOINT";
-    const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY || "YOUR_API_KEY";
-    const WHATSAPP_SENDER = process.env.WHATSAPP_SENDER || "YOUR_SENDER_NUMBER";
+    const WHATSAPP_API_URL = process.env.WHATSAPP_API_URL;
+    const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY;
+    const WHATSAPP_SENDER = process.env.WHATSAPP_SENDER;
 
     // Skip if WhatsApp is not configured
-    if (WHATSAPP_API_URL === "YOUR_WHATSAPP_API_ENDPOINT") {
+    if (!WHATSAPP_API_URL || !WHATSAPP_API_KEY || !WHATSAPP_SENDER) {
       console.log("⚠️  WhatsApp not configured - skipping notification");
       return false;
     }
+
+    // ✅ Format phone number correctly (add 91 prefix if not present)
+    let formattedPhone = phone.toString().replace(/\D/g, ''); // Remove non-digits
+    
+    if (!formattedPhone.startsWith('91') && formattedPhone.length === 10) {
+      formattedPhone = '91' + formattedPhone;
+    }
+
+    console.log(`📱 Preparing WhatsApp message for: ${formattedPhone}`);
 
     let message = "";
 
@@ -200,25 +206,53 @@ const sendWhatsAppNotification = async (phone, type, data) => {
       message = `Your PRED CARE OTP is: *${data.otp}*\n\nValid for 10 minutes. Do not share with anyone.\n\n- PRED CARE`;
     }
 
-    // Example API call structure - adjust based on your WhatsApp provider
+    // ✅ Pinbot API payload structure
+    const payload = {
+      phone: formattedPhone,
+      message: message,
+      sender: WHATSAPP_SENDER,
+    };
+
+    console.log("📤 WhatsApp Payload:", JSON.stringify(payload, null, 2));
+
+    // Make API call with proper error handling
     const response = await axios.post(
       WHATSAPP_API_URL,
-      {
-        phone: phone,
-        message: message,
-      },
+      payload,
       {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${WHATSAPP_API_KEY}`,
         },
+        timeout: 10000 // 10 second timeout
       }
     );
 
-    console.log("✅ WhatsApp sent to:", phone);
+    console.log("📨 WhatsApp API Response:", JSON.stringify(response.data, null, 2));
+    console.log("✅ WhatsApp sent successfully to:", formattedPhone);
     return true;
+
   } catch (error) {
-    console.log("❌ WhatsApp Error:", error.message);
+    console.error("❌ WhatsApp Error Details:");
+    console.error("- Message:", error.message);
+    
+    if (error.response) {
+      console.error("- Status Code:", error.response.status);
+      console.error("- Response Data:", JSON.stringify(error.response.data, null, 2));
+      console.error("- Response Headers:", error.response.headers);
+    } else if (error.request) {
+      console.error("- No response received from server");
+      console.error("- Request:", error.request);
+    }
+    
+    if (error.code === 'ECONNABORTED') {
+      console.error("- Request timed out after 10 seconds");
+    }
+    
+    if (error.code === 'ENOTFOUND') {
+      console.error("- DNS lookup failed - check WHATSAPP_API_URL");
+    }
+    
     return false;
   }
 };
