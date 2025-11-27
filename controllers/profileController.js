@@ -166,8 +166,11 @@ export const createProfile = async (req, res) => {
         
         console.log("📝 Update query:", updateQuery);
         console.log("📝 Update values:", updateValues);
+        console.log("📝 Number of fields:", updateFields.length);
+        console.log("📝 Number of values:", updateValues.length);
         
-        await db.query(updateQuery, updateValues);
+        const [result] = await db.query(updateQuery, updateValues);
+        console.log("✅ Database update result:", result);
         
       } else {
         // Insert new patient profile
