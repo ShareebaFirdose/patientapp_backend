@@ -29,17 +29,18 @@ export const createProfile = async (req, res) => {
     // 🔥 Access body fields correctly with multipart/form-data
     console.log("🔥 Raw req.body:", req.body);
     console.log("📎 Raw req.file:", req.file);
+    console.log("🔍 All body keys:", Object.keys(req.body));
 
     let gender = req.body?.gender;
     let date_of_birth = req.body?.date_of_birth;
     let alternate_phone = req.body?.alternate_phone;
     
-    // ✅ Extract address fields
+    // ✅ Extract address fields - check both naming conventions
     let address = req.body?.address;
-    let street_address = req.body?.street_address;
+    let street_address = req.body?.street_address || req.body?.streetAddress;
     let city = req.body?.city;
     let state = req.body?.state;
-    let postal_code = req.body?.postal_code;
+    let postal_code = req.body?.postal_code || req.body?.postalCode;
     let country = req.body?.country;
     
     let profile_picture = null;
@@ -61,9 +62,22 @@ export const createProfile = async (req, res) => {
 
     // ✅ Updated Validation - include address fields
     if (!gender || !date_of_birth || !address || !street_address || !city || !state || !postal_code || !country) {
+      const missing = [];
+      if (!gender) missing.push('gender');
+      if (!date_of_birth) missing.push('date_of_birth');
+      if (!address) missing.push('address');
+      if (!street_address) missing.push('street_address');
+      if (!city) missing.push('city');
+      if (!state) missing.push('state');
+      if (!postal_code) missing.push('postal_code');
+      if (!country) missing.push('country');
+      
+      console.log("❌ Missing required fields:", missing);
+      
       return res.status(400).json({
         success: false,
-        message: "Gender, Date of Birth, and all address fields are required",
+        message: `Missing required fields: ${missing.join(', ')}`,
+        missing_fields: missing
       });
     }
 
