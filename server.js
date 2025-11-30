@@ -18,6 +18,7 @@ import patientRoutes from "./routes/patientRoutes.js";
 import doctorAvailabilityRoutes from "./routes/doctorAvailabilityRoutes.js";
 import videoRoutes from "./routes/videoRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import prescriptionRoutes from "./routes/prescriptionRoutes.js"; // ✅ NEW
 
 dotenv.config();
 
@@ -71,6 +72,7 @@ app.use("/api/patients", patientRoutes);
 app.use("/doctor_availability", doctorAvailabilityRoutes);
 app.use("/api/video", videoRoutes);
 app.use("/api/payment", paymentRoutes);
+app.use("/api/prescriptions", prescriptionRoutes); // ✅ NEW PRESCRIPTION ROUTES
 
 /* =========================
    DEFAULT UPLOAD

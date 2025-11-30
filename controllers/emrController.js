@@ -1,9 +1,10 @@
+// emrController.js - UPDATED VERSION
 import db from "../config/db.js";
 import fs from "fs";
 import path from "path";
 
 /* =====================================
-   ✅ UPLOAD EMR – WITH TITLE FIELD
+   ✅ UPLOAD EMR – UPDATED FOR FRONTEND
 ===================================== */
 export const uploadEMR = async (req, res) => {
   try {
@@ -18,14 +19,13 @@ export const uploadEMR = async (req, res) => {
     }
 
     const title = req.body?.title?.trim() || "";
-    const document_type = req.body?.document_type || "Other";
+    const category = req.body?.category || req.body?.document_type || "Other Documents";
     const notes = req.body?.notes?.trim() || "";
     const user_id = req.user?.id;
 
     if (!user_id) {
       console.log("❌ No user id in token");
       
-      // Delete uploaded file
       if (fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
       }
@@ -39,7 +39,6 @@ export const uploadEMR = async (req, res) => {
     if (!title) {
       console.log("❌ Title is required");
       
-      // Delete uploaded file
       if (fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
       }
@@ -51,61 +50,70 @@ export const uploadEMR = async (req, res) => {
     }
 
     const file_path = req.file.path.replace(/\\/g, "/");
+    
+    // ✅ Determine file type from mimetype
+    let fileType = "document";
+    if (req.file.mimetype.startsWith("image/")) {
+      fileType = "image";
+    } else if (req.file.mimetype === "application/pdf") {
+      fileType = "pdf";
+    }
+    
+    // ✅ Calculate file size
+    const fileSizeKB = (req.file.size / 1024).toFixed(2);
+    const fileSize = fileSizeKB < 1024 
+      ? `${fileSizeKB} KB` 
+      : `${(fileSizeKB / 1024).toFixed(2)} MB`;
 
-    console.log("✅ USER ID:", user_id);
-    console.log("✅ TITLE:", title);
-    console.log("✅ FILE:", req.file.originalname);
-    console.log("✅ PATH:", file_path);
-    console.log("✅ TYPE:", document_type);
-    console.log("✅ NOTES:", notes || "(none)");
+    console.log("USER ID:", user_id);
+    console.log("TITLE:", title);
+    console.log("FILE:", req.file.originalname);
+    console.log("PATH:", file_path);
+    console.log("CATEGORY:", category);
+    console.log("FILE TYPE:", fileType);
+    console.log("FILE SIZE:", fileSize);
 
     const doctor_id = null;
     const patient_id = user_id;
     const appointment_id = null;
     
-    // ✅ Get current timestamp
     const now = new Date();
 
-    // ✅ INSERT with title field
     const sql = `
       INSERT INTO doctor_emr_documents
       (doctor_id, patient_id, appointment_id, title, document_type, document_path, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    const values = [doctor_id, patient_id, appointment_id, title, document_type, file_path, now, now];
+    const values = [doctor_id, patient_id, appointment_id, title, category, file_path, now, now];
 
     console.log("📝 Inserting into DB...");
-    console.log("📋 Values:", values);
 
-    // ✅ Use your db.query method (returns promise)
     const [rows] = await db.query(sql, values);
     
-    console.log("✅ Query result:", rows);
     console.log("✅ EMR INSERTED SUCCESSFULLY → ID:", rows.insertId);
-    console.log("✅ Upload complete!\n");
 
+    // ✅ Return format expected by frontend
     return res.status(201).json({
       success: true,
       message: "Document uploaded successfully",
       data: {
         id: rows.insertId,
-        title: title,
-        document_type: document_type,
-        document_path: file_path,
+        name: req.file.originalname, // Frontend expects 'name'
+        type: fileType, // Frontend expects 'type'
+        url: `/${file_path}`, // Frontend expects 'url' with leading slash
+        size: fileSize, // Frontend expects 'size'
+        category: category, // Frontend expects 'category'
+        uploadedAt: now, // Frontend expects 'uploadedAt'
         patient_id: patient_id,
+        title: title,
         notes: notes,
-        created_at: now,
-        updated_at: now,
       },
     });
 
   } catch (error) {
     console.error("❌ UPLOAD ERROR:", error.message);
-    console.error("❌ Error code:", error.code);
-    console.error("❌ Stack:", error.stack);
 
-    // Delete uploaded file on error
     if (req.file?.path && fs.existsSync(req.file.path)) {
       try {
         fs.unlinkSync(req.file.path);
@@ -125,10 +133,11 @@ export const uploadEMR = async (req, res) => {
 
 
 /* =====================================
-   ✅ GET MY DOCUMENTS
+   ✅ GET MY DOCUMENTS - UPDATED
 ===================================== */
 export const getMyDocuments = async (req, res) => {
   const user_id = req.user?.id;
+  const { category } = req.query; // ✅ Get category filter from query
 
   if (!user_id) {
     return res.status(401).json({
@@ -138,32 +147,83 @@ export const getMyDocuments = async (req, res) => {
   }
 
   console.log(`📥 Fetching documents for user: ${user_id}`);
+  if (category) {
+    console.log(`📁 Filtering by category: ${category}`);
+  }
 
   try {
-    const sql = `
+    let sql = `
       SELECT 
         id,
         doctor_id,
         patient_id,
         appointment_id,
         title,
-        document_type,
+        document_type as category,
         document_path,
         created_at,
         updated_at
       FROM doctor_emr_documents 
-      WHERE patient_id = ? 
-      ORDER BY created_at DESC
+      WHERE patient_id = ?
     `;
 
-    const [rows] = await db.query(sql, [user_id]);
+    const params = [user_id];
+
+    // ✅ Add category filter if provided
+    if (category) {
+      sql += " AND document_type = ?";
+      params.push(category);
+    }
+
+    sql += " ORDER BY created_at DESC";
+
+    const [rows] = await db.query(sql, params);
 
     console.log(`✅ Found ${rows.length} document(s)`);
 
+    // ✅ Transform data to match frontend expectations
+    const transformedData = rows.map(row => {
+      // Determine file type from path
+      let fileType = "document";
+      const ext = path.extname(row.document_path).toLowerCase();
+      
+      if ([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"].includes(ext)) {
+        fileType = "image";
+      } else if (ext === ".pdf") {
+        fileType = "pdf";
+      }
+
+      // Get file size
+      let fileSize = "Unknown";
+      try {
+        const fullPath = path.resolve(row.document_path);
+        if (fs.existsSync(fullPath)) {
+          const stats = fs.statSync(fullPath);
+          const sizeKB = (stats.size / 1024).toFixed(2);
+          fileSize = sizeKB < 1024 
+            ? `${sizeKB} KB` 
+            : `${(sizeKB / 1024).toFixed(2)} MB`;
+        }
+      } catch (err) {
+        console.error("Error getting file size:", err);
+      }
+
+      return {
+        id: row.id,
+        name: row.title || path.basename(row.document_path),
+        type: fileType,
+        url: `/${row.document_path}`, // Add leading slash for static serving
+        size: fileSize,
+        category: row.category,
+        uploadedAt: row.created_at,
+        patient_id: row.patient_id,
+      };
+    });
+
     return res.json({
       success: true,
-      count: rows.length,
-      data: rows,
+      count: transformedData.length,
+      data: transformedData,
     });
   } catch (err) {
     console.error("❌ FETCH ERROR:", err.message);
@@ -178,7 +238,7 @@ export const getMyDocuments = async (req, res) => {
 
 
 /* =====================================
-   ✅ DOWNLOAD EMR
+   ✅ DOWNLOAD EMR - UNCHANGED
 ===================================== */
 export const downloadEMR = async (req, res) => {
   const { id } = req.params;
@@ -204,7 +264,6 @@ export const downloadEMR = async (req, res) => {
 
     const document = rows[0];
 
-    // ✅ Security check
     if (document.patient_id !== user_id) {
       return res.status(403).json({
         success: false,
@@ -235,7 +294,7 @@ export const downloadEMR = async (req, res) => {
 
 
 /* =====================================
-   ✅ DELETE EMR
+   ✅ DELETE EMR - UNCHANGED
 ===================================== */
 export const deleteEMR = async (req, res) => {
   const { id } = req.params;
@@ -246,11 +305,9 @@ export const deleteEMR = async (req, res) => {
   let connection;
 
   try {
-    // ✅ Get connection for transaction
     connection = await db.getConnection();
     await connection.beginTransaction();
 
-    // ✅ Verify ownership
     const selectSql = `
       SELECT document_path, patient_id 
       FROM doctor_emr_documents 
@@ -269,7 +326,6 @@ export const deleteEMR = async (req, res) => {
 
     const document = rows[0];
 
-    // ✅ Security check
     if (document.patient_id !== user_id) {
       await connection.rollback();
       return res.status(403).json({
@@ -278,14 +334,11 @@ export const deleteEMR = async (req, res) => {
       });
     }
 
-    // ✅ Delete from database
     const deleteSql = "DELETE FROM doctor_emr_documents WHERE id = ?";
     await connection.query(deleteSql, [id]);
 
-    // ✅ Commit transaction
     await connection.commit();
 
-    // ✅ Delete file from filesystem (after DB success)
     const filePath = path.resolve(document.document_path);
     if (fs.existsSync(filePath)) {
       try {
@@ -303,7 +356,6 @@ export const deleteEMR = async (req, res) => {
       message: "Document deleted successfully",
     });
   } catch (err) {
-    // ✅ Rollback on error
     if (connection) {
       try {
         await connection.rollback();
@@ -319,7 +371,6 @@ export const deleteEMR = async (req, res) => {
       error: err.message,
     });
   } finally {
-    // ✅ Release connection
     if (connection) {
       connection.release();
     }
