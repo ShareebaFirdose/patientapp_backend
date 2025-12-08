@@ -7,6 +7,7 @@ import {
   getBookedSlots,
   getVideoToken,
   saveCallDetails,
+  debugAppointment,
 } from "../controllers/appointmentController.js";
 import { authenticateJWT } from "../middleware/authMiddleware.js";
 
@@ -21,8 +22,9 @@ router.get("/upcoming", authenticateJWT, getUpcomingAppointments);
 router.get("/past", authenticateJWT, getPastAppointments);
 router.get("/my-appointments", authenticateJWT, getAllMyAppointments);
 
-/* ❗ KEEP THIS BELOW booked-slots, otherwise it overrides everything */
+/* ⚠️ KEEP THIS BELOW booked-slots, otherwise it overrides everything */
 router.get("/:id/video-token", authenticateJWT, getVideoToken);
+router.get("/:id/debug", authenticateJWT, debugAppointment); // 🔥 DEBUG ENDPOINT
 router.get("/:id", authenticateJWT, getAppointmentById);
 
 /* Save call details */
