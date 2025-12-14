@@ -5,6 +5,7 @@ import nodemailer from "nodemailer";
 import axios from "axios";
 import db from "../config/db.js";
 import dotenv from "dotenv";
+import { generateInvoicePDF, generateInvoiceNumber } from "../utils/invoiceGenerator.js";
 dotenv.config();
 
 const razorpay = new Razorpay({
@@ -23,7 +24,7 @@ const transporter = nodemailer.createTransport({
 });
 
 /* ============================================================
-   📱 SEND WHATSAPP NOTIFICATION - FIXED VERSION
+   📱 SEND WHATSAPP NOTIFICATION
 ============================================================ */
 const sendWhatsAppNotification = async (phone, type, data) => {
   try {
@@ -31,14 +32,12 @@ const sendWhatsAppNotification = async (phone, type, data) => {
     const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY;
     const WHATSAPP_SENDER = process.env.WHATSAPP_SENDER;
 
-    // Skip if WhatsApp is not configured
     if (!WHATSAPP_API_URL || !WHATSAPP_API_KEY || !WHATSAPP_SENDER) {
       console.log("⚠️  WhatsApp not configured - skipping notification");
       return false;
     }
 
-    // ✅ Format phone number correctly (add 91 prefix if not present)
-    let formattedPhone = phone.toString().replace(/\D/g, ''); // Remove non-digits
+    let formattedPhone = phone.toString().replace(/\D/g, '');
     
     if (!formattedPhone.startsWith('91') && formattedPhone.length === 10) {
       formattedPhone = '91' + formattedPhone;
@@ -49,88 +48,158 @@ const sendWhatsAppNotification = async (phone, type, data) => {
     let message = "";
 
     if (type === "appointment_patient") {
-      message = `✅ *Appointment Confirmed*\n\nHi ${
-        data.patientName
-      },\n\n*Appointment Details:*\n━━━━━━━━━━━━━━━━━\n📋 ID: ${
-        data.appointment_id
-      }\n👨‍⚕️ Doctor: Dr. ${
-        data.doctor_name
-      }\n📅 Date: ${
-        data.appointment_date
-      }\n🕐 Time: ${
-        data.appointment_slot_time
-      }\n💊 Type: ${
-        data.consultation_type
-      }\n💰 Fee: ₹${
-        data.appointment_fee
-      }\n💳 Transaction: ${
-        data.transaction_id
-      }\n\nThank you for choosing PRED CARE!\n\n- PRED CARE Team`;
+      message = `✅ *Appointment Confirmed*\n\nHi ${data.patientName},\n\n*Appointment Details:*\n━━━━━━━━━━━━━━━━━\n📋 ID: ${data.appointment_id}\n👨‍⚕️ Doctor: Dr. ${data.doctor_name}\n📅 Date: ${data.appointment_date}\n🕐 Time: ${data.appointment_slot_time}\n💊 Type: ${data.consultation_type}\n💰 Fee: ₹${data.appointment_fee}\n💳 Transaction: ${data.transaction_id}\n📄 Invoice: ${data.invoice_number}\n\nYour invoice has been sent to your email.\n\nThank you for choosing PRED CARE!\n\n- PRED CARE Team`;
     } else if (type === "appointment_doctor") {
-      message = `🔔 *New Appointment Booked*\n\nDr. ${
-        data.doctor_name
-      },\n\n*Patient Details:*\n━━━━━━━━━━━━━━━━━\n👤 Name: ${
-        data.patientName
-      }\n📧 Email: ${
-        data.patientEmail
-      }\n📱 Phone: ${
-        data.patientPhone
-      }\n\n*Appointment:*\n📅 ${
-        data.appointment_date
-      }\n🕐 ${
-        data.appointment_slot_time
-      }\n💊 ${
-        data.consultation_type
-      }\n📋 ID: ${
-        data.appointment_id
-      }\n${
-        data.reason
-          ? `\n📝 Reason: ${data.reason}`
-          : ""
-      }\n\n- PRED CARE`;
+      message = `🔔 *New Appointment Booked*\n\nDr. ${data.doctor_name},\n\n*Patient Details:*\n━━━━━━━━━━━━━━━━━\n👤 Name: ${data.patientName}\n📧 Email: ${data.patientEmail}\n📱 Phone: ${data.patientPhone}\n\n*Appointment:*\n📅 ${data.appointment_date}\n🕐 ${data.appointment_slot_time}\n💊 ${data.consultation_type}\n📋 ID: ${data.appointment_id}\n${data.reason ? `\n📝 Reason: ${data.reason}` : ""}\n\n- PRED CARE`;
     }
 
-    // ✅ Pinbot API payload structure
     const payload = {
       phone: formattedPhone,
       message: message,
       sender: WHATSAPP_SENDER,
     };
 
-    console.log("📤 WhatsApp Payload:", JSON.stringify(payload, null, 2));
+    const response = await axios.post(WHATSAPP_API_URL, payload, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${WHATSAPP_API_KEY}`,
+      },
+      timeout: 10000
+    });
 
-    const response = await axios.post(
-      WHATSAPP_API_URL,
-      payload,
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${WHATSAPP_API_KEY}`,
-        },
-        timeout: 10000 // 10 second timeout
-      }
-    );
-
-    console.log("📨 WhatsApp API Response:", JSON.stringify(response.data, null, 2));
     console.log("✅ WhatsApp sent successfully to:", formattedPhone);
     return true;
 
   } catch (error) {
-    console.error("❌ WhatsApp Error Details:");
-    console.error("- Type:", type);
-    console.error("- Message:", error.message);
-    
-    if (error.response) {
-      console.error("- Status Code:", error.response.status);
-      console.error("- Response Data:", JSON.stringify(error.response.data, null, 2));
-    } else if (error.request) {
-      console.error("- No response received from server");
-    }
-    
-    if (error.code === 'ECONNABORTED') {
-      console.error("- Request timed out after 10 seconds");
-    }
-    
+    console.error("❌ WhatsApp Error:", error.message);
+    return false;
+  }
+};
+
+/* ============================================================
+   📧 SEND INVOICE EMAIL TO PATIENT
+============================================================ */
+const sendInvoiceEmail = async (patientEmail, patientName, invoicePath, appointmentData) => {
+  try {
+    const emailHtml = `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); padding: 40px 30px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: 700;">PRED CARE</h1>
+        </div>
+
+        <!-- Content -->
+        <div style="padding: 40px 30px;">
+          <h2 style="color: #0F172A; font-size: 24px; margin: 0 0 20px 0;">Payment Confirmation & Invoice</h2>
+          
+          <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+            Dear <strong style="color: #0F172A;">${patientName}</strong>,
+          </p>
+
+          <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+            Thank you for booking your appointment with PRED CARE. Your payment has been successfully processed, and your appointment is confirmed!
+          </p>
+
+          <!-- Appointment Summary Card -->
+          <div style="background: #F8FAFC; border-left: 4px solid #3B82F6; border-radius: 8px; padding: 20px; margin: 0 0 25px 0;">
+            <h3 style="color: #0F172A; font-size: 16px; margin: 0 0 15px 0; font-weight: 600;">Appointment Summary</h3>
+            
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 8px 0; color: #64748B; font-size: 14px; width: 40%;">Appointment ID:</td>
+                <td style="padding: 8px 0; color: #0F172A; font-size: 14px; font-weight: 600;">${appointmentData.appointment_id}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #64748B; font-size: 14px;">Doctor:</td>
+                <td style="padding: 8px 0; color: #0F172A; font-size: 14px; font-weight: 600;">Dr. ${appointmentData.doctor_name}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #64748B; font-size: 14px;">Date:</td>
+                <td style="padding: 8px 0; color: #0F172A; font-size: 14px; font-weight: 600;">${formatDateForEmail(appointmentData.appointment_date)}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #64748B; font-size: 14px;">Time:</td>
+                <td style="padding: 8px 0; color: #0F172A; font-size: 14px; font-weight: 600;">${appointmentData.appointment_slot_time}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #64748B; font-size: 14px;">Type:</td>
+                <td style="padding: 8px 0; color: #0F172A; font-size: 14px; font-weight: 600;">${appointmentData.consultation_type}</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Payment Details Card -->
+          <div style="background: #ECFDF5; border-left: 4px solid #10B981; border-radius: 8px; padding: 20px; margin: 0 0 25px 0;">
+            <h3 style="color: #0F172A; font-size: 16px; margin: 0 0 15px 0; font-weight: 600;">Payment Details</h3>
+            
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 8px 0; color: #64748B; font-size: 14px; width: 40%;">Amount Paid:</td>
+                <td style="padding: 8px 0; color: #10B981; font-size: 18px; font-weight: 700;">₹${appointmentData.appointment_fee}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #64748B; font-size: 14px;">Transaction ID:</td>
+                <td style="padding: 8px 0; color: #0F172A; font-size: 14px; font-family: monospace;">${appointmentData.transaction_id}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #64748B; font-size: 14px;">Invoice Number:</td>
+                <td style="padding: 8px 0; color: #0F172A; font-size: 14px; font-family: monospace;">${appointmentData.invoice_number}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #64748B; font-size: 14px;">Payment Status:</td>
+                <td style="padding: 8px 0;">
+                  <span style="background: #10B981; color: #ffffff; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">PAID</span>
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Invoice Attachment Notice -->
+          <div style="background: #FEF3C7; border: 1px solid #FDE047; border-radius: 8px; padding: 15px; margin: 0 0 25px 0;">
+            <p style="color: #854D0E; font-size: 14px; margin: 0; line-height: 1.5;">
+              📎 <strong>Invoice attached:</strong> Your detailed invoice is attached to this email as a PDF document.
+            </p>
+          </div>
+
+          <p style="color: #475569; font-size: 14px; line-height: 1.6; margin: 0 0 15px 0;">
+            If you have any questions or need to reschedule, please contact us at 
+            <a href="mailto:support@predcare.com" style="color: #3B82F6; text-decoration: none;">support@predcare.com</a>
+          </p>
+
+          <p style="color: #475569; font-size: 14px; line-height: 1.6; margin: 0;">
+            Best regards,<br>
+            <strong style="color: #0F172A;">The PRED CARE Team</strong>
+          </p>
+        </div>
+
+        <!-- Footer -->
+        <div style="background: #F8FAFC; padding: 25px 30px; text-align: center; border-top: 1px solid #E2E8F0;">
+          <p style="color: #94A3B8; font-size: 12px; margin: 0 0 10px 0;">
+            © 2024 PRED CARE. All rights reserved.
+          </p>
+          <p style="color: #94A3B8; font-size: 12px; margin: 0;">
+            This is an automated message. Please do not reply to this email.
+          </p>
+        </div>
+    `;
+
+    await transporter.sendMail({
+      from: `"PRED CARE" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
+      to: patientEmail,
+      subject: `Payment Confirmation & Invoice - ${appointmentData.appointment_id}`,
+      html: emailHtml,
+      attachments: [
+        {
+          filename: `Invoice_${appointmentData.invoice_number}.pdf`,
+          path: invoicePath,
+        },
+      ],
+    });
+
+    console.log("✅ Invoice email sent to:", patientEmail);
+    return true;
+  } catch (error) {
+    console.error("❌ Invoice email failed:", error.message);
     return false;
   }
 };
@@ -146,7 +215,7 @@ const formatDateForEmail = (dateStr) => {
   });
 };
 
-// ---------------- EMAIL TEMPLATES ----------------
+// ---------------- DOCTOR EMAIL TEMPLATE ----------------
 const buildDoctorEmailHtml = ({
   doctorName,
   patientName,
@@ -180,38 +249,6 @@ const buildDoctorEmailHtml = ({
       <li><strong>Type:</strong> ${type}</li>
       <li><strong>Appointment ID:</strong> ${appointment_id}</li>
       <li><strong>Reason:</strong> ${reason || "N/A"}</li>
-    </ul>
-  </div>`;
-};
-
-const buildPatientEmailHtml = ({
-  patientName,
-  doctorName,
-  specialization,
-  clinicName,
-  date,
-  time,
-  type,
-  fee,
-  appointment_id,
-  transaction_id,
-}) => {
-  return `
-  <div style="font-family:Arial; color:#000; padding:24px;">
-    <h1>PRED CARE</h1>
-    <p>Hi ${patientName}, your appointment is confirmed.</p>
-
-    <ul>
-      <li><strong>Doctor:</strong> Dr. ${doctorName} ${
-    specialization ? `(${specialization})` : ""
-  }</li>
-      <li><strong>Clinic:</strong> ${clinicName}</li>
-      <li><strong>Date:</strong> ${formatDateForEmail(date)}</li>
-      <li><strong>Time:</strong> ${time}</li>
-      <li><strong>Type:</strong> ${type}</li>
-      <li><strong>Fee Paid:</strong> ₹${fee}</li>
-      <li><strong>Payment ID:</strong> ${transaction_id}</li>
-      <li><strong>Appointment ID:</strong> ${appointment_id}</li>
     </ul>
   </div>`;
 };
@@ -316,6 +353,9 @@ export const verifyPayment = async (req, res) => {
     const nextSeq = maxRow[0].maxId + 1;
     const appointment_id = `APPT-${String(nextSeq).padStart(5, "0")}`;
 
+    // ✅ Generate invoice number
+    const invoice_number = generateInvoiceNumber();
+
     const meeting_id = uuidv4();
     const token = uuidv4();
 
@@ -339,12 +379,13 @@ export const verifyPayment = async (req, res) => {
         appointment_status,
         payment_status,
         transaction_id,
+        invoice_number,
         meeting_id,
         token,
         reason,
         symptoms,
         medications
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `;
 
     const insertValues = [
@@ -365,6 +406,7 @@ export const verifyPayment = async (req, res) => {
       "pending",
       "paid",
       payload.razorpay_payment_id,
+      invoice_number,
       meeting_id,
       token,
       payload.reason || "",
@@ -385,6 +427,35 @@ export const verifyPayment = async (req, res) => {
     const doctorName = doc?.[0]?.name || "Doctor";
     const doctorEmail = doc?.[0]?.email;
     const doctorPhone = doc?.[0]?.phone_number;
+
+    // ✅ GENERATE INVOICE PDF
+    console.log("📄 Generating invoice PDF...");
+    let invoicePath;
+    try {
+      invoicePath = await generateInvoicePDF({
+        appointment_id,
+        invoice_number,
+        invoice_date: new Date().toISOString(),
+        patient_name: payload.patient_name,
+        patient_email: payload.patient_email,
+        patient_phone: payload.patient_phone || "N/A",
+        doctor_name: doctorName,
+        specialization: "",
+        clinic_name: "PRED CARE Clinic",
+        clinic_address: "Healthcare Center",
+        appointment_date: payload.appointment_date,
+        appointment_slot_time: slotString,
+        consultation_type: payload.consultation_type,
+        appointment_fee: payload.appointment_fee,
+        tax_amount: 0,
+        total_amount: payload.appointment_fee,
+        transaction_id: payload.razorpay_payment_id,
+        payment_method: "Razorpay",
+      });
+      console.log("✅ Invoice PDF generated:", invoicePath);
+    } catch (pdfError) {
+      console.error("❌ Invoice PDF generation failed:", pdfError.message);
+    }
 
     console.log("📧 Sending notifications...");
 
@@ -433,38 +504,33 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
-    // ✅ SEND EMAIL TO PATIENT
-    const patientHtml = buildPatientEmailHtml({
-      patientName: payload.patient_name,
-      doctorName,
-      specialization: "",
-      clinicName: "Clinic",
-      date: payload.appointment_date,
-      time: slotString,
-      type: payload.consultation_type,
-      fee: payload.appointment_fee,
-      appointment_id,
-      transaction_id: payload.razorpay_payment_id,
-    });
+    // ✅ SEND INVOICE EMAIL TO PATIENT
+    if (invoicePath) {
+      await sendInvoiceEmail(
+        payload.patient_email,
+        payload.patient_name,
+        invoicePath,
+        {
+          appointment_id,
+          invoice_number,
+          doctor_name: doctorName,
+          appointment_date: payload.appointment_date,
+          appointment_slot_time: slotString,
+          consultation_type: payload.consultation_type,
+          appointment_fee: payload.appointment_fee,
+          transaction_id: payload.razorpay_payment_id,
+        }
+      );
+    }
 
-    transporter.sendMail({
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to: payload.patient_email,
-      subject: `Appointment Confirmed - ${appointment_id}`,
-      html: patientHtml,
-    }).then(() => {
-      console.log("✅ Patient email sent to:", payload.patient_email);
-    }).catch(err => {
-      console.error("❌ Patient email failed:", err.message);
-    });
-
-    // ✅ SEND WHATSAPP TO PATIENT
+    // ✅ SEND WHATSAPP TO PATIENT (with invoice info)
     if (payload.patient_phone) {
       console.log("📱 Attempting WhatsApp to patient:", payload.patient_phone);
       sendWhatsAppNotification(payload.patient_phone, "appointment_patient", {
         patientName: payload.patient_name,
         doctor_name: doctorName,
         appointment_id,
+        invoice_number,
         appointment_date: formatDateForEmail(payload.appointment_date),
         appointment_slot_time: slotString,
         consultation_type: payload.consultation_type,
@@ -479,6 +545,7 @@ export const verifyPayment = async (req, res) => {
       success: true,
       data: {
         appointment_id,
+        invoice_number,
         appointment_date: payload.appointment_date,
         appointment_slot_time: slotString,
         appointment_fee: payload.appointment_fee,

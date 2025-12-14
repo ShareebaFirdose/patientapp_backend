@@ -78,12 +78,16 @@ export const getAllDoctors = async (req, res) => {
 };
 
 /* ============================================================
-   GET DOCTOR BY ID
+   GET DOCTOR BY ID - FIXED VERSION
+   ✅ Now checks BOTH d.id AND d.user_id
 ============================================================ */
 export const getDoctorById = async (req, res) => {
   try {
     const { id } = req.params;
 
+    console.log(`🔍 getDoctorById called with ID: ${id}`);
+
+    // ✅ FIX: Try to find doctor by EITHER d.id OR d.user_id
     const [rows] = await db.query(
       `
       SELECT 
@@ -97,18 +101,25 @@ export const getDoctorById = async (req, res) => {
         d.bio
       FROM doctors d
       JOIN users u ON d.user_id = u.id
-      WHERE d.id = ?
+      WHERE d.id = ? OR d.user_id = ?
+      LIMIT 1
       `,
-      [id]
+      [id, id]
     );
 
+    console.log(`📦 Query result:`, rows);
+
     if (!rows.length) {
+      console.log(`❌ Doctor not found with ID: ${id}`);
       return res.status(404).json({
         success: false,
         message: "Doctor not found",
       });
     }
 
+    console.log(`✅ Doctor found:`, rows[0]);
+
+    // Get availability for this doctor
     const [availability] = await db.query(
       `
       SELECT 
@@ -128,7 +139,7 @@ export const getDoctorById = async (req, res) => {
       WHERE doctor_id = ? AND status = 1
       ORDER BY id DESC
       `,
-      [id]
+      [rows[0].doctor_id] // ✅ Use the actual doctor_id from the result
     );
 
     const safeJSON = (v) => {

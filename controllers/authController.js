@@ -1,6 +1,6 @@
 import db from "../config/db.js";
 import jwt from "jsonwebtoken";
-import nodemailer from "nodemailer";
+import { createTransport } from "nodemailer";
 import axios from "axios";
 import dotenv from "dotenv";
 
@@ -9,7 +9,7 @@ dotenv.config();
 /* ============================================================
    EMAIL TRANSPORTER SETUP
 ============================================================ */
-const transporter = nodemailer.createTransport({
+const transporter = createTransport({
   service: "gmail",
   auth: { 
     user: process.env.EMAIL_USER, 
@@ -22,6 +22,30 @@ const transporter = nodemailer.createTransport({
 ============================================================ */
 const generateOtp = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
+
+/* ============================================================
+   NORMALIZE PHONE NUMBER - Always add 91 prefix
+============================================================ */
+const normalizePhoneNumber = (phone) => {
+  if (!phone) return null;
+  
+  // Remove all non-digit characters
+  let cleaned = phone.toString().replace(/\D/g, '');
+  
+  // If it's 10 digits, add 91 prefix
+  if (cleaned.length === 10 && !cleaned.startsWith('91')) {
+    cleaned = '91' + cleaned;
+  }
+  
+  // If it already has 91 and is 12 digits, return as is
+  if (cleaned.startsWith('91') && cleaned.length === 12) {
+    console.log(`📱 Normalized phone: ${phone} → ${cleaned}`);
+    return cleaned;
+  }
+  
+  console.log(`📱 Normalized phone: ${phone} → ${cleaned}`);
+  return cleaned;
+};
 
 /* ============================================================
    SEND OTP USING PINNACLE SMS (Signup / Login / Forgot)
@@ -173,64 +197,176 @@ const sendWelcomeEmail = async (name, email) => {
 };
 
 /* ============================================================
-   📱 SEND WHATSAPP NOTIFICATION - FIXED VERSION
+   HELPER: GET PHONE NUMBER ID FROM PINBOT API
 ============================================================ */
-const sendWhatsAppNotification = async (phone, type, data) => {
+const getPhoneNumberId = async (businessNumber, apiKey) => {
   try {
-    const WHATSAPP_API_URL = process.env.WHATSAPP_API_URL;
-    const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY;
-    const WHATSAPP_SENDER = process.env.WHATSAPP_SENDER;
+    console.log("🔍 Fetching phone_number_id for:", businessNumber);
+    
+    const response = await axios.get(
+      'https://partnersv1.pinbot.ai/v3/getuserdetails',
+      {
+        headers: {
+          'apikey': apiKey,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
 
-    // Skip if WhatsApp is not configured
-    if (!WHATSAPP_API_URL || !WHATSAPP_API_KEY || !WHATSAPP_SENDER) {
-      console.log("⚠️  WhatsApp not configured - skipping notification");
+    console.log("📋 User Details Response:", JSON.stringify(response.data, null, 2));
+
+    if (response.data && response.data.data && response.data.data.length > 0) {
+      // Try multiple matching strategies
+      const phoneData = response.data.data.find(item => {
+        const wanumber = item.wanumber || '';
+        const cleanWanumber = wanumber.replace(/\D/g, '');
+        const cleanBusinessNumber = businessNumber.toString().replace(/\D/g, '');
+        
+        return (
+          wanumber === businessNumber ||
+          wanumber === `+${businessNumber}` ||
+          wanumber === `91${businessNumber}` ||
+          wanumber === `+91${businessNumber}` ||
+          cleanWanumber === cleanBusinessNumber ||
+          cleanWanumber.endsWith(cleanBusinessNumber) ||
+          cleanBusinessNumber.endsWith(cleanWanumber)
+        );
+      });
+      
+      if (phoneData) {
+        console.log("✅ Found phone_number_id:", phoneData.phone_number_id);
+        console.log("✅ Matching wanumber:", phoneData.wanumber);
+        return phoneData.phone_number_id;
+      } else {
+        console.log("❌ No matching phone number found");
+        console.log("Available numbers:", response.data.data.map(d => d.wanumber).join(', '));
+      }
+    }
+    
+    console.log("❌ Could not find phone_number_id for:", businessNumber);
+    return null;
+  } catch (error) {
+    console.error("❌ Error fetching phone_number_id:", error.message);
+    if (error.response) {
+      console.error("Response data:", error.response.data);
+    }
+    return null;
+  }
+};
+
+/* ============================================================
+   📱 SEND WHATSAPP NOTIFICATION - USING PINBOT API
+============================================================ */
+let cachedPhoneNumberId = null;
+
+export const sendWhatsAppNotification = async (phone, templateType, data) => {
+  try {
+    const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY;
+    const WHATSAPP_BUSINESS_NUMBER = process.env.WHATSAPP_BUSINESS_NUMBER;
+    const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+    if (!WHATSAPP_API_KEY || !WHATSAPP_BUSINESS_NUMBER) {
+      console.log("⚠️ WhatsApp not configured - skipping notification");
       return false;
     }
 
-    // ✅ Format phone number correctly (add 91 prefix if not present)
-    let formattedPhone = phone.toString().replace(/\D/g, ''); // Remove non-digits
+    // ✅ Format phone number correctly
+    let formattedPhone = phone.toString().replace(/\D/g, '');
     
     if (!formattedPhone.startsWith('91') && formattedPhone.length === 10) {
       formattedPhone = '91' + formattedPhone;
     }
 
-    console.log(`📱 Preparing WhatsApp message for: ${formattedPhone}`);
+    console.log(`📱 Preparing WhatsApp template for: ${formattedPhone}`);
 
-    let message = "";
-
-    if (type === "signup_welcome") {
-      message = `🎉 *Welcome to PRED CARE!*\n\nHi ${data.name},\n\nThank you for signing up! Your account has been successfully verified.\n\n✅ You can now:\n• Book appointments\n• Video consultations\n• Access medical records\n\nNeed help? Contact support@predcare.com\n\n- PRED CARE Team`;
-    } else if (type === "appointment_booked") {
-      message = `✅ *Appointment Confirmed*\n\nHi ${data.patientName},\n\n*Appointment ID:* ${data.appointment_id}\n*Doctor:* Dr. ${data.doctor_name}\n*Date:* ${data.appointment_date}\n*Time:* ${data.appointment_slot_time}\n*Type:* ${data.consultation_type}\n*Fee:* ₹${data.appointment_fee}\n\n*Transaction ID:* ${data.transaction_id}\n\nSee you soon!\n- PRED CARE`;
-    } else if (type === "otp") {
-      message = `Your PRED CARE OTP is: *${data.otp}*\n\nValid for 10 minutes. Do not share with anyone.\n\n- PRED CARE`;
+    let PHONE_NUMBER_ID = cachedPhoneNumberId || WHATSAPP_PHONE_NUMBER_ID;
+    
+    if (!PHONE_NUMBER_ID) {
+      console.log("🔍 Fetching phone_number_id from API...");
+      PHONE_NUMBER_ID = await getPhoneNumberId(WHATSAPP_BUSINESS_NUMBER, WHATSAPP_API_KEY);
+      
+      if (PHONE_NUMBER_ID) {
+        cachedPhoneNumberId = PHONE_NUMBER_ID;
+        console.log("✅ Cached phone_number_id:", PHONE_NUMBER_ID);
+      } else {
+        console.log("❌ Could not retrieve phone_number_id");
+        return false;
+      }
     }
 
-    // ✅ Pinbot API payload structure
-    const payload = {
-      phone: formattedPhone,
-      message: message,
-      sender: WHATSAPP_SENDER,
-    };
+    let payload;
+    let url = `https://partnersv1.pinbot.ai/v3/${PHONE_NUMBER_ID}/messages`;
 
+    if (templateType === "login_otp") {
+      payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: formattedPhone,
+        type: "template",
+        template: {
+          name: "login_otp",
+          language: { code: "en" },
+          components: [
+            {
+              type: "body",
+              parameters: [{ type: "text", text: data.otp || "000000" }]
+            },
+            {
+              type: "button",
+              sub_type: "url",
+              index: "0",
+              parameters: [{ type: "text", text: data.otp || "000000" }]
+            }
+          ]
+        }
+      };
+    } 
+    else if (templateType === "welcome_patient") {
+      payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: formattedPhone,
+        type: "template",
+        template: {
+          name: "welcome_patient",
+          language: { code: "en" },
+          components: [
+            {
+              type: "button",
+              sub_type: "url",
+              index: "0",
+              parameters: [{ type: "text", text: data.buttonUrl || "welcome" }]
+            }
+          ]
+        }
+      };
+    }
+    else {
+      console.log("⚠️ Unknown template type:", templateType);
+      return false;
+    }
+
+    console.log("📤 WhatsApp API URL:", url);
     console.log("📤 WhatsApp Payload:", JSON.stringify(payload, null, 2));
 
-    // Make API call with proper error handling
-    const response = await axios.post(
-      WHATSAPP_API_URL,
-      payload,
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${WHATSAPP_API_KEY}`,
-        },
-        timeout: 10000 // 10 second timeout
-      }
-    );
+    const response = await axios.post(url, payload, {
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": WHATSAPP_API_KEY,
+      },
+      timeout: 15000
+    });
 
     console.log("📨 WhatsApp API Response:", JSON.stringify(response.data, null, 2));
-    console.log("✅ WhatsApp sent successfully to:", formattedPhone);
-    return true;
+    
+    if (response.data && response.data.messages && response.data.messages.length > 0) {
+      console.log("✅ WhatsApp sent successfully to:", formattedPhone);
+      console.log("✅ Message ID:", response.data.messages[0].id);
+      return true;
+    } else {
+      console.log("⚠️ WhatsApp sent but uncertain status:", response.data);
+      return true;
+    }
 
   } catch (error) {
     console.error("❌ WhatsApp Error Details:");
@@ -240,17 +376,11 @@ const sendWhatsAppNotification = async (phone, type, data) => {
       console.error("- Status Code:", error.response.status);
       console.error("- Response Data:", JSON.stringify(error.response.data, null, 2));
       console.error("- Response Headers:", error.response.headers);
-    } else if (error.request) {
-      console.error("- No response received from server");
-      console.error("- Request:", error.request);
-    }
-    
-    if (error.code === 'ECONNABORTED') {
-      console.error("- Request timed out after 10 seconds");
-    }
-    
-    if (error.code === 'ENOTFOUND') {
-      console.error("- DNS lookup failed - check WHATSAPP_API_URL");
+      
+      if (error.response.data?.error?.code === 131008) {
+        console.error("\n💡 FIX: Template requires button parameter");
+        console.error("   Make sure to pass buttonUrl in the data object");
+      }
     }
     
     return false;
@@ -290,11 +420,23 @@ export const loginUser = async (req, res) => {
 };
 
 /* ============================================================
-   SIGNUP – SEND OTP (Email + SMS)
+   SIGNUP – SEND OTP (Email + SMS + WhatsApp) - FIXED VERSION
 ============================================================ */
 export const signupRequestOtp = async (req, res) => {
   try {
-    const { name, email, phone_number } = req.body;
+    let { name, email, phone_number } = req.body;
+
+    // ✅ Normalize phone number
+    phone_number = normalizePhoneNumber(phone_number);
+    
+    if (!phone_number) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid phone number format" 
+      });
+    }
+
+    console.log(`✅ Normalized phone for signup: ${phone_number}`);
 
     const [exist] = await db.query(
       "SELECT id FROM users WHERE email=? OR phone_number=?",
@@ -302,31 +444,80 @@ export const signupRequestOtp = async (req, res) => {
     );
   
     if (exist.length > 0)
-      return res.json({ success: false, message: "User already exists" });
+      return res.json({ 
+        success: false, 
+        message: "User already exists" 
+      });
 
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Insert user with 'inactive' status
+    // Insert user with normalized phone number
     await db.query(
       `INSERT INTO users (name, email, phone_number, otp, otp_expiry, status)
        VALUES (?, ?, ?, ?, ?, 'inactive')`,
       [name, email, phone_number, otp, expiresAt]
     );
 
-    // Send OTP via Email and SMS
-    await sendEmailOtp(email, otp, "Your Signup OTP");
-    await sendOtpSms(phone_number, otp, "signup");
+    // ✅ Track which channels succeeded
+    const channels = [];
 
-    // Optional: Send OTP via WhatsApp
-    sendWhatsAppNotification(phone_number, "otp", { otp }).catch(err => 
-      console.log("WhatsApp OTP skipped:", err.message)
-    );
+    // ✅ Send OTP via Email (critical channel)
+    try {
+      const emailSent = await sendEmailOtp(email, otp, "Your Signup OTP");
+      if (emailSent) {
+        console.log("✅ Email OTP sent");
+        channels.push("Email");
+      } else {
+        console.log("⚠️ Email OTP failed");
+      }
+    } catch (error) {
+      console.log("⚠️ Email OTP error:", error.message);
+    }
+    
+    // ✅ Send OTP via SMS (don't block on failure)
+    try {
+      const smsSent = await sendOtpSms(phone_number, otp, "signup");
+      if (smsSent) {
+        console.log("✅ SMS OTP sent");
+        channels.push("SMS");
+      } else {
+        console.log("⚠️ SMS OTP failed");
+      }
+    } catch (error) {
+      console.log("⚠️ SMS OTP error:", error.message);
+    }
 
-    return res.json({
-      success: true,
-      message: "Signup OTP sent successfully",
+    // ✅ Send OTP via WhatsApp (don't block on failure)
+    try {
+      const whatsappSent = await sendWhatsAppNotification(phone_number, "login_otp", { 
+        otp: otp 
+      });
+      if (whatsappSent) {
+        console.log("✅ WhatsApp OTP sent");
+        channels.push("WhatsApp");
+      } else {
+        console.log("⚠️ WhatsApp OTP failed");
+      }
+    } catch (error) {
+      console.log("⚠️ WhatsApp OTP error:", error.message);
+    }
+
+    // ✅ Return success if at least one channel worked
+    if (channels.length > 0) {
+      return res.json({
+        success: true,
+        message: `Signup OTP sent successfully via ${channels.join(', ')}`,
+        channels: channels
+      });
+    }
+
+    // ❌ Only fail if all channels failed
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send OTP. Please try again or contact support.",
     });
+
   } catch (err) {
     console.error("Signup OTP Error:", err);
     return res.status(500).json({
@@ -337,11 +528,14 @@ export const signupRequestOtp = async (req, res) => {
 };
 
 /* ============================================================
-   SIGNUP – VERIFY OTP + SEND WELCOME NOTIFICATIONS
+   SIGNUP – VERIFY OTP
 ============================================================ */
 export const signupVerifyOtp = async (req, res) => {
   try {
-    const { email, phone_number, otp } = req.body;
+    let { email, phone_number, otp } = req.body;
+
+    // ✅ Normalize phone number for lookup
+    phone_number = normalizePhoneNumber(phone_number);
 
     const [rows] = await db.query(
       "SELECT * FROM users WHERE email=? AND phone_number=? LIMIT 1",
@@ -353,7 +547,6 @@ export const signupVerifyOtp = async (req, res) => {
 
     const user = rows[0];
 
-    // user should be inactive before verifying
     if (user.status === "active")
       return res.status(400).json({ success: false, message: "Already verified" });
 
@@ -363,21 +556,9 @@ export const signupVerifyOtp = async (req, res) => {
     if (new Date() > user.otp_expiry)
       return res.status(400).json({ success: false, message: "OTP expired" });
 
-    // Update user status to active
     await db.query(
       "UPDATE users SET otp=NULL, otp_expiry=NULL, status='active' WHERE id=?",
       [user.id]
-    );
-
-    // 🎉 SEND WELCOME NOTIFICATIONS (non-blocking)
-    sendWelcomeEmail(user.name, user.email).catch(err => 
-      console.error("Welcome email failed:", err)
-    );
-    
-    sendWhatsAppNotification(user.phone_number, "signup_welcome", {
-      name: user.name,
-    }).catch(err => 
-      console.log("WhatsApp welcome skipped:", err.message)
     );
 
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
@@ -402,7 +583,7 @@ export const requestLoginOtp = async (req, res) => {
   try {
     const { email } = req.body;
 
-    const [rows] = await db.query("SELECT id FROM users WHERE email=?", [email]);
+    const [rows] = await db.query("SELECT id, phone_number FROM users WHERE email=?", [email]);
 
     if (rows.length === 0)
       return res.status(400).json({ success: false, message: "Email not registered" });
@@ -414,9 +595,54 @@ export const requestLoginOtp = async (req, res) => {
       [otp, email]
     );
 
-    await sendEmailOtp(email, otp, "Your Login OTP");
+    // ✅ Track which channels succeeded
+    const channels = [];
 
-    return res.json({ success: true, message: "Login OTP sent to email" });
+    // ✅ Send OTP via Email
+    try {
+      const emailSent = await sendEmailOtp(email, otp, "Your Login OTP");
+      if (emailSent) {
+        console.log("✅ Email OTP sent");
+        channels.push("Email");
+      } else {
+        console.log("⚠️ Email OTP failed");
+      }
+    } catch (error) {
+      console.log("⚠️ Email OTP error:", error.message);
+    }
+
+    // ✅ Send OTP via WhatsApp if phone exists
+    if (rows[0].phone_number) {
+      try {
+        const whatsappSent = await sendWhatsAppNotification(rows[0].phone_number, "login_otp", { 
+          otp: otp 
+        });
+        if (whatsappSent) {
+          console.log("✅ WhatsApp OTP sent");
+          channels.push("WhatsApp");
+        } else {
+          console.log("⚠️ WhatsApp OTP failed");
+        }
+      } catch (error) {
+        console.log("⚠️ WhatsApp OTP error:", error.message);
+      }
+    }
+
+    // ✅ Return success if at least one channel worked
+    if (channels.length > 0) {
+      return res.json({ 
+        success: true, 
+        message: `Login OTP sent successfully via ${channels.join(' and ')}`,
+        channels: channels
+      });
+    }
+
+    // ❌ Only fail if all channels failed
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send OTP. Please try again.",
+    });
+
   } catch (err) {
     return res.status(500).json({ success: false, message: "Failed to send OTP" });
   }
@@ -469,11 +695,23 @@ export const verifyLoginOtp = async (req, res) => {
 };
 
 /* ============================================================
-   MOBILE LOGIN OTP
+   MOBILE LOGIN OTP - FIXED VERSION
 ============================================================ */
 export const requestMobileOtp = async (req, res) => {
   try {
-    const { phone_number } = req.body;
+    let { phone_number } = req.body;
+
+    // ✅ Normalize phone number
+    phone_number = normalizePhoneNumber(phone_number);
+    
+    if (!phone_number) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid phone number format" 
+      });
+    }
+
+    console.log(`✅ Normalized phone for login: ${phone_number}`);
 
     const [rows] = await db.query(
       "SELECT id FROM users WHERE phone_number=?",
@@ -490,16 +728,57 @@ export const requestMobileOtp = async (req, res) => {
       [otp, phone_number]
     );
 
-    const sent = await sendOtpSms(phone_number, otp, "login");
+    // ✅ Track which channels succeeded
+    let smsSuccess = false;
+    let whatsappSuccess = false;
+    const channels = [];
 
-    if (!sent)
-      return res.status(500).json({
-        success: false,
-        message: "Failed to send OTP. Check DLT template",
+    // ✅ Try SMS (don't block on failure)
+    try {
+      smsSuccess = await sendOtpSms(phone_number, otp, "login");
+      if (smsSuccess) {
+        console.log("✅ SMS OTP sent successfully");
+        channels.push("SMS");
+      } else {
+        console.log("⚠️ SMS OTP failed");
+      }
+    } catch (error) {
+      console.log("⚠️ SMS OTP error:", error.message);
+    }
+
+    // ✅ Try WhatsApp (don't block on failure)
+    try {
+      whatsappSuccess = await sendWhatsAppNotification(phone_number, "login_otp", { 
+        otp: otp 
       });
+      if (whatsappSuccess) {
+        console.log("✅ WhatsApp OTP sent successfully");
+        channels.push("WhatsApp");
+      } else {
+        console.log("⚠️ WhatsApp OTP failed");
+      }
+    } catch (error) {
+      console.log("⚠️ WhatsApp OTP error:", error.message);
+    }
 
-    return res.json({ success: true, message: "Mobile OTP sent" });
+    // ✅ Return success if at least one channel worked
+    if (smsSuccess || whatsappSuccess) {
+      return res.json({ 
+        success: true, 
+        message: `OTP sent successfully via ${channels.join(' and ')}`,
+        channels: channels
+      });
+    }
+
+    // ❌ Only fail if both channels failed
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send OTP via SMS and WhatsApp. Please try again or contact support.",
+      technicalDetails: "Both SMS and WhatsApp delivery failed"
+    });
+
   } catch (err) {
+    console.error("Mobile OTP Error:", err);
     return res.status(500).json({
       success: false,
       message: "Failed to send mobile OTP",
@@ -512,7 +791,10 @@ export const requestMobileOtp = async (req, res) => {
 ============================================================ */
 export const verifyMobileOtp = async (req, res) => {
   try {
-    const { phone_number, otp } = req.body;
+    let { phone_number, otp } = req.body;
+
+    // ✅ Normalize phone number
+    phone_number = normalizePhoneNumber(phone_number);
 
     const [rows] = await db.query(
       "SELECT * FROM users WHERE phone_number=? LIMIT 1",
@@ -573,8 +855,3 @@ export const getLoggedInUser = async (req, res) => {
     });
   }
 };
-
-/* ============================================================
-   EXPORT WHATSAPP FUNCTION FOR USE IN OTHER CONTROLLERS
-============================================================ */
-export { sendWhatsAppNotification };
