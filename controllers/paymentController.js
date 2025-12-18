@@ -1,3 +1,4 @@
+// ===================== COMPLETE paymentController.js - FIXED =====================
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
@@ -48,9 +49,9 @@ const sendWhatsAppNotification = async (phone, type, data) => {
     let message = "";
 
     if (type === "appointment_patient") {
-      message = `✅ *Appointment Confirmed*\n\nHi ${data.patientName},\n\n*Appointment Details:*\n━━━━━━━━━━━━━━━━━\n📋 ID: ${data.appointment_id}\n👨‍⚕️ Doctor: Dr. ${data.doctor_name}\n📅 Date: ${data.appointment_date}\n🕐 Time: ${data.appointment_slot_time}\n💊 Type: ${data.consultation_type}\n💰 Fee: ₹${data.appointment_fee}\n💳 Transaction: ${data.transaction_id}\n📄 Invoice: ${data.invoice_number}\n\nYour invoice has been sent to your email.\n\nThank you for choosing PRED CARE!\n\n- PRED CARE Team`;
+      message = `✅ *Appointment Confirmed*\n\nHi ${data.patientName},\n\n*Appointment Details:*\n━━━━━━━━━━━━━━━━━━\n📋 ID: ${data.appointment_id}\n👨‍⚕️ Doctor: Dr. ${data.doctor_name}\n📅 Date: ${data.appointment_date}\n🕐 Time: ${data.appointment_slot_time}\n💊 Type: ${data.consultation_type}\n💰 Fee: ₹${data.appointment_fee}\n💳 Transaction: ${data.transaction_id}\n📄 Invoice: ${data.invoice_number}\n\nYour invoice has been sent to your email.\n\nThank you for choosing PRED CARE!\n\n- PRED CARE Team`;
     } else if (type === "appointment_doctor") {
-      message = `🔔 *New Appointment Booked*\n\nDr. ${data.doctor_name},\n\n*Patient Details:*\n━━━━━━━━━━━━━━━━━\n👤 Name: ${data.patientName}\n📧 Email: ${data.patientEmail}\n📱 Phone: ${data.patientPhone}\n\n*Appointment:*\n📅 ${data.appointment_date}\n🕐 ${data.appointment_slot_time}\n💊 ${data.consultation_type}\n📋 ID: ${data.appointment_id}\n${data.reason ? `\n📝 Reason: ${data.reason}` : ""}\n\n- PRED CARE`;
+      message = `🔔 *New Appointment Booked*\n\nDr. ${data.doctor_name},\n\n*Patient Details:*\n━━━━━━━━━━━━━━━━━━\n👤 Name: ${data.patientName}\n📧 Email: ${data.patientEmail}\n📱 Phone: ${data.patientPhone}\n\n*Appointment:*\n📅 ${data.appointment_date}\n🕐 ${data.appointment_slot_time}\n💊 ${data.consultation_type}\n📋 ID: ${data.appointment_id}\n${data.reason ? `\n📝 Reason: ${data.reason}` : ""}\n\n- PRED CARE`;
     }
 
     const payload = {
@@ -157,7 +158,7 @@ const sendInvoiceEmail = async (patientEmail, patientName, invoicePath, appointm
           <!-- Invoice Attachment Notice -->
           <div style="background: #FEF3C7; border: 1px solid #FDE047; border-radius: 8px; padding: 15px; margin: 0 0 25px 0;">
             <p style="color: #854D0E; font-size: 14px; margin: 0; line-height: 1.5;">
-              📎 <strong>Invoice attached:</strong> Your detailed invoice is attached to this email as a PDF document.
+              🔎 <strong>Invoice attached:</strong> Your detailed invoice is attached to this email as a PDF document.
             </p>
           </div>
 
@@ -181,6 +182,7 @@ const sendInvoiceEmail = async (patientEmail, patientName, invoicePath, appointm
             This is an automated message. Please do not reply to this email.
           </p>
         </div>
+      </div>
     `;
 
     await transporter.sendMail({
@@ -322,25 +324,44 @@ export const verifyPayment = async (req, res) => {
       });
     }
 
+    // 🔥 FIX: Get the actual doctors.id from user_id
+    console.log(`🔍 Looking up doctor.id for user_id: ${payload.doctor_id}`);
+    
+    const [doctorRows] = await db.query(
+      "SELECT id, user_id FROM doctors WHERE user_id = ?",
+      [payload.doctor_id]
+    );
+
+    if (!doctorRows || doctorRows.length === 0) {
+      console.error(`❌ No doctor found with user_id: ${payload.doctor_id}`);
+      return res.status(400).json({
+        success: false,
+        message: `Doctor not found with user_id: ${payload.doctor_id}`,
+      });
+    }
+
+    const actualDoctorId = doctorRows[0].id; // This is the doctors.id (19)
+    console.log(`✅ Found doctor.id: ${actualDoctorId} for user_id: ${payload.doctor_id}`);
+
     // ✅ Convert multi slots to string
     const slotString = Array.isArray(payload.appointment_slot_time)
       ? payload.appointment_slot_time.join(", ")
       : payload.appointment_slot_time;
 
-    // ✅ Get clinic ID
+    // ✅ Get clinic ID - using actualDoctorId
     const [availRows] = await db.query(
       `SELECT clinic_id FROM doctor_availability 
        WHERE doctor_id = ? AND status = 1 LIMIT 1`,
-      [payload.doctor_id]
+      [actualDoctorId] // 🔥 FIXED: Use actualDoctorId
     );
 
     const clinic_id = availRows?.[0]?.clinic_id || payload.clinic_id || null;
 
-    // ✅ First or follow-up visit
+    // ✅ First or follow-up visit - using actualDoctorId
     const [prev] = await db.query(
       `SELECT id FROM appointments 
        WHERE patient_id = ? AND doctor_id = ? LIMIT 1`,
-      [payload.patient_id, payload.doctor_id]
+      [payload.patient_id, actualDoctorId] // 🔥 FIXED: Use actualDoctorId
     );
 
     const appointment_type = prev.length ? "follow_up" : "first_visit";
@@ -359,7 +380,7 @@ export const verifyPayment = async (req, res) => {
     const meeting_id = uuidv4();
     const token = uuidv4();
 
-    // ✅ FINAL INSERT
+    // ✅ FINAL INSERT - using actualDoctorId
     const insertQuery = `
       INSERT INTO appointments (
         appointment_id,
@@ -393,7 +414,7 @@ export const verifyPayment = async (req, res) => {
       payload.patient_id,
       payload.patient_name,
       payload.patient_email,
-      payload.doctor_id,
+      actualDoctorId, // 🔥 FIXED: Use actualDoctorId instead of payload.doctor_id
       clinic_id,
       payload.appointment_date,
       slotString,
@@ -418,10 +439,10 @@ export const verifyPayment = async (req, res) => {
 
     console.log("✅ Appointment saved with ID:", appointment_id);
 
-    // ✅ GET DOCTOR INFO
+    // ✅ GET DOCTOR INFO - still use payload.doctor_id for users table
     const [doc] = await db.query(
       `SELECT name, email, phone_number FROM users WHERE id = ?`,
-      [payload.doctor_id]
+      [payload.doctor_id] // This is user_id, correct for users table
     );
 
     const doctorName = doc?.[0]?.name || "Doctor";
@@ -550,7 +571,8 @@ export const verifyPayment = async (req, res) => {
         appointment_slot_time: slotString,
         appointment_fee: payload.appointment_fee,
         patient_name: payload.patient_name,
-        doctor_id: payload.doctor_id,
+        doctor_id: actualDoctorId, // 🔥 Return the actual doctor.id
+        doctor_user_id: payload.doctor_id, // Also return user_id for reference
         doctor_name: doctorName,
         consultation_type: payload.consultation_type,
         transaction_id: payload.razorpay_payment_id,
@@ -564,4 +586,9 @@ export const verifyPayment = async (req, res) => {
       error: err.message,
     });
   }
+};
+
+export default {
+  createOrder,
+  verifyPayment,
 };

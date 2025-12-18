@@ -206,10 +206,12 @@ export const getUpcomingAppointments = async (req, res) => {
       SELECT 
         a.*,
         u.name as doctor_name,
-        d.specialization
+        d.specialization,
+        d.experience_years,
+        d.bio
       FROM appointments a
-      LEFT JOIN users u ON a.doctor_id = u.id
-      LEFT JOIN doctors d ON a.doctor_id = d.user_id
+      LEFT JOIN doctors d ON a.doctor_id = d.id
+      LEFT JOIN users u ON d.user_id = u.id
       WHERE a.patient_id = ?
         AND a.appointment_date >= CURDATE()
       ORDER BY a.appointment_date ASC, a.start_time ASC
@@ -244,10 +246,12 @@ export const getPastAppointments = async (req, res) => {
       SELECT 
         a.*,
         u.name AS doctor_name,
-        d.specialization
+        d.specialization,
+        d.experience_years,
+        d.bio
       FROM appointments a
-      LEFT JOIN users u ON a.doctor_id = u.id
-      LEFT JOIN doctors d ON a.doctor_id = d.user_id
+      LEFT JOIN doctors d ON a.doctor_id = d.id
+      LEFT JOIN users u ON d.user_id = u.id
       WHERE a.patient_id = ?
         AND a.appointment_date < CURDATE()
       ORDER BY a.appointment_date DESC, a.start_time DESC
@@ -282,10 +286,12 @@ export const getAllMyAppointments = async (req, res) => {
       SELECT 
         a.*,
         u.name AS doctor_name,
-        d.specialization
+        d.specialization,
+        d.experience_years,
+        d.bio
       FROM appointments a
-      LEFT JOIN users u ON a.doctor_id = u.id
-      LEFT JOIN doctors d ON a.doctor_id = d.user_id
+      LEFT JOIN doctors d ON a.doctor_id = d.id
+      LEFT JOIN users u ON d.user_id = u.id
       WHERE a.patient_id = ?
       ORDER BY a.appointment_date DESC, a.start_time DESC
       `,
@@ -322,11 +328,15 @@ export const getAppointmentById = async (req, res) => {
       SELECT 
         a.*,
         u.name AS doctor_name,
+        u.email AS doctor_email,
+        u.phone_number AS doctor_phone,
         d.specialization,
-        d.doctor_id
+        d.experience_years,
+        d.bio,
+        d.id AS doctor_id
       FROM appointments a
-      LEFT JOIN users u ON a.doctor_id = u.id
-      LEFT JOIN doctors d ON a.doctor_id = d.user_id
+      LEFT JOIN doctors d ON a.doctor_id = d.id
+      LEFT JOIN users u ON d.user_id = u.id
       WHERE a.id = ?
       LIMIT 1
       `,
